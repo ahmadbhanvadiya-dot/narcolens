@@ -2,24 +2,42 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  ArrowLeft,
-  Camera,
-  CheckCircle2,
-  ShieldCheck,
-  Upload,
-} from "lucide-react";
 
 export default function CapturePage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [cameraReady, setCameraReady] = useState(false);
-  const [capturedImage, setCapturedImage] = useState("");
-  const [error, setError] = useState("");
+  const [cameraReady, setCameraReady] =
+    useState(false);
+
+  const [capturedImage, setCapturedImage] =
+    useState("");
+
+  const [error, setError] =
+    useState("");
+
+  const [location, setLocation] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
+
+  const [locationError, setLocationError] =
+    useState("");
+
+  const [locationLoading, setLocationLoading] =
+    useState(true);
+
+  const [cameraLoading, setCameraLoading] =
+    useState(true);
+
+  /* --------------------------------------------------
+     Start Camera
+  -------------------------------------------------- */
 
   useEffect(() => {
     startCamera();
+    getDeviceLocation();
 
     return () => {
       stopCamera();
@@ -28,23 +46,32 @@ export default function CapturePage() {
 
   async function startCamera() {
     try {
+      setCameraLoading(true);
       setError("");
 
       if (!navigator.mediaDevices?.getUserMedia) {
-        setError("Camera access is not supported by this browser.");
+        setError(
+          "Camera access is not supported by this browser."
+        );
+        setCameraLoading(false);
         return;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: {
-            ideal: "environment",
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: {
+              ideal: "environment",
+            },
+            width: {
+              ideal: 1920,
+            },
+            height: {
+              ideal: 1080,
+            },
           },
-        },
-        audio: false,
-      });
-
-      streamRef.current = stream;
+          audio: false,
+        });
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -53,45 +80,168 @@ export default function CapturePage() {
 
         setCameraReady(true);
       }
-    } catch (err) {
-      console.error(err);
-
-      setCameraReady(false);
-      setError(
-        "Unable to access the camera. You can still upload an image from your files."
+    } catch (error) {
+      console.error(
+        "Camera error:",
+        error
       );
+
+      setError(
+        "Unable to access the camera. Please allow camera permission or use Upload from Files."
+      );
+    } finally {
+      setCameraLoading(false);
     }
   }
+
+  /* --------------------------------------------------
+     Stop Camera
+  -------------------------------------------------- */
 
   function stopCamera() {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+    const stream =
+      videoRef.current?.srcObject as MediaStream | null;
+
+    if (stream) {
+      stream.getTracks().forEach((track) => {
+        track.stop();
+      });
     }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    setCameraReady(false);
   }
 
+  /* --------------------------------------------------
+     Get Device Location
+  -------------------------------------------------- */
+
+  function getDeviceLocation() {
+    if (!navigator.geolocation) {
+      setLocationLoading(false);
+
+      setLocationError(
+        "Geolocation is not supported by this device."
+      );
+
+      return;
+    }
+
+    setLocationLoading(true);
+    setLocationError("");
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude =
+          position.coords.latitude;
+
+        const longitude =
+          position.coords.longitude;
+
+        const timestamp =
+          new Date().toISOString();
+
+        const locationData = {
+          latitude,
+          longitude,
+          timestamp,
+        };
+
+        setLocation({
+          latitude,
+          longitude,
+        });
+
+        sessionStorage.setItem(
+          "narcolens_test_location",
+          JSON.stringify(locationData)
+        );
+
+        setLocationLoading(false);
+      },
+
+      (error) => {
+        console.error(
+          "Location error:",
+          error
+        );
+
+        let message =
+          "Unable to access device location.";
+
+        if (
+          error.code ===
+          error.PERMISSION_DENIED
+        ) {
+          message =
+            "Location permission was denied. Please allow location access and try again.";
+        } else if (
+          error.code ===
+          error.POSITION_UNAVAILABLE
+        ) {
+          message =
+            "Your current location could not be determined.";
+        } else if (
+          error.code ===
+          error.TIMEOUT
+        ) {
+          message =
+            "Location request timed out. Please try again.";
+        }
+
+        setLocationError(message);
+        setLocationLoading(false);
+      },
+
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  }
+
+  /* --------------------------------------------------
+     Capture Image From Camera
+  -------------------------------------------------- */
+
   function captureImage() {
-    if (!videoRef.current) {
-      setError("Camera is not available.");
-      return;
-    }
-
     const video = videoRef.current;
+    const canvas = canvasRef.current;
 
-    if (!video.videoWidth || !video.videoHeight) {
-      setError("Camera image is not ready yet. Please try again.");
+    if (!video || !canvas) {
+      setError(
+        "Camera is not ready."
+      );
+
       return;
     }
 
-    const canvas = document.createElement("canvas");
+    if (
+      video.videoWidth === 0 ||
+      video.videoHeight === 0
+    ) {
+      setError(
+        "Camera image is not ready yet."
+      );
+
+      return;
+    }
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
 
-    const context = canvas.getContext("2d");
+    const context =
+      canvas.getContext("2d");
 
     if (!context) {
-      setError("Unable to capture the image.");
+      setError(
+        "Unable to capture the camera image."
+      );
+
       return;
     }
 
@@ -103,7 +253,11 @@ export default function CapturePage() {
       canvas.height
     );
 
-    const image = canvas.toDataURL("image/jpeg", 0.92);
+    const image =
+      canvas.toDataURL(
+        "image/jpeg",
+        0.92
+      );
 
     sessionStorage.setItem(
       "narcolens_captured_image",
@@ -111,30 +265,42 @@ export default function CapturePage() {
     );
 
     setCapturedImage(image);
-    setError("");
 
     stopCamera();
-    setCameraReady(false);
+
+    setError("");
   }
+
+  /* --------------------------------------------------
+     Upload Image From Files
+  -------------------------------------------------- */
 
   function handleFileUpload(
     event: React.ChangeEvent<HTMLInputElement>
   ) {
-    const file = event.target.files?.[0];
+    const file =
+      event.target.files?.[0];
 
-    if (!file) return;
+    if (!file) {
+      return;
+    }
 
     if (!file.type.startsWith("image/")) {
-      setError("Please select a valid image file.");
+      setError(
+        "Please select a valid image file."
+      );
+
       return;
     }
 
     setError("");
 
-    const reader = new FileReader();
+    const reader =
+      new FileReader();
 
     reader.onload = () => {
-      const result = reader.result;
+      const result =
+        reader.result;
 
       if (typeof result === "string") {
         sessionStorage.setItem(
@@ -145,459 +311,457 @@ export default function CapturePage() {
         setCapturedImage(result);
 
         stopCamera();
-        setCameraReady(false);
       }
     };
 
     reader.onerror = () => {
-      setError("Unable to read the selected image.");
+      setError(
+        "Unable to read the selected image."
+      );
     };
 
     reader.readAsDataURL(file);
 
-    // Allows selecting the same file again later.
     event.target.value = "";
   }
 
+  /* --------------------------------------------------
+     Retake Image
+  -------------------------------------------------- */
+
   function retakeImage() {
-    sessionStorage.removeItem("narcolens_captured_image");
+    sessionStorage.removeItem(
+      "narcolens_captured_image"
+    );
 
     setCapturedImage("");
+
     setError("");
 
     startCamera();
   }
 
+  /* --------------------------------------------------
+     Continue
+  -------------------------------------------------- */
+
+  function continueToAnalysis() {
+    if (!capturedImage) {
+      setError(
+        "Please capture or upload an image first."
+      );
+
+      return;
+    }
+
+    if (!location) {
+      setError(
+        "Test location has not been captured. Please allow location access before continuing."
+      );
+
+      return;
+    }
+
+    window.location.href =
+      "/test/analysis";
+  }
+
   return (
     <main className="min-h-screen bg-[#F7F9FC]">
-      {/* Header */}
-      <header className="border-b border-[#D9E1EA] bg-white">
-        <div className="flex h-[78px]">
-          {/* Logo */}
-          <div className="flex w-[263px] items-center border-r border-[#D9E1EA] px-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#0B1F3A]">
-                <ShieldCheck
-                  size={20}
-                  className="text-white"
-                />
-              </div>
+
+      <div className="mx-auto max-w-5xl px-6 py-8">
+
+        {/* Back */}
+        <Link
+          href="/test"
+          className="inline-flex items-center gap-2 text-sm font-medium text-[#174A7E] hover:underline"
+        >
+          ← Back to Test Details
+        </Link>
+
+        {/* Header */}
+        <div className="mt-6">
+
+          <p className="text-sm font-medium text-[#174A7E]">
+            STEP 02 / 04
+          </p>
+
+          <h1 className="mt-2 text-3xl font-semibold text-[#0B1F3A]">
+            Capture Test Result
+          </h1>
+
+          <p className="mt-2 text-[#667085]">
+            Capture the test result with the reference
+            colour card visible in the frame.
+          </p>
+
+        </div>
+
+        {/* Workflow */}
+        <div className="mt-8 flex flex-wrap items-center gap-3 text-sm">
+
+          <div className="text-[#667085]">
+            01 Test Details
+          </div>
+
+          <span className="text-[#98A2B3]">
+            →
+          </span>
+
+          <div className="font-semibold text-[#174A7E]">
+            02 Capture
+          </div>
+
+          <span className="text-[#98A2B3]">
+            →
+          </span>
+
+          <div className="text-[#667085]">
+            03 Analysis
+          </div>
+
+          <span className="text-[#98A2B3]">
+            →
+          </span>
+
+          <div className="text-[#667085]">
+            04 Record
+          </div>
+
+        </div>
+
+        {/* Camera / Image */}
+        <section className="mt-8 overflow-hidden rounded-xl border border-[#D9E1EA] bg-white">
+
+          {/* Camera header */}
+          <div className="border-b border-[#D9E1EA] px-6 py-4">
+
+            <div className="flex items-center justify-between">
 
               <div>
-                <div className="text-[19px] font-semibold leading-none text-[#0B1F3A]">
-                  NarcoLens
-                </div>
+                <h2 className="font-semibold text-[#0B1F3A]">
+                  Test Image
+                </h2>
 
-                <div className="mt-1 text-[10px] font-medium tracking-[0.12em] text-[#667085]">
-                  FIELD INTELLIGENCE
-                </div>
+                <p className="mt-1 text-sm text-[#667085]">
+                  Keep both the test result and reference
+                  colour card visible.
+                </p>
               </div>
+
+              <div
+                className={`rounded-md px-3 py-1.5 text-xs font-medium ${
+                  capturedImage
+                    ? "bg-green-50 text-green-700"
+                    : cameraReady
+                      ? "bg-[#EAF2F8] text-[#174A7E]"
+                      : "bg-[#F7F9FC] text-[#667085]"
+                }`}
+              >
+                {capturedImage
+                  ? "Image Captured"
+                  : cameraReady
+                    ? "Camera Ready"
+                    : "Camera Starting"}
+              </div>
+
             </div>
+
           </div>
 
-          {/* Page title */}
-          <div className="flex flex-1 items-center px-8">
+          {/* Camera area */}
+          <div className="p-6">
+
+            <div className="relative aspect-video overflow-hidden rounded-lg border border-[#D9E1EA] bg-[#0B1F3A]">
+
+              {/* Camera */}
+              {!capturedImage && (
+                <>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="h-full w-full object-cover"
+                  />
+
+                  {/* Camera loading */}
+                  {cameraLoading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-[#0B1F3A]">
+
+                      <div className="text-center text-white">
+
+                        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+
+                        <p className="mt-3 text-sm">
+                          Starting camera...
+                        </p>
+
+                      </div>
+
+                    </div>
+                  )}
+
+                  {/* Capture overlay */}
+                  {cameraReady && (
+                    <div className="pointer-events-none absolute inset-0">
+
+                      {/* Reference card */}
+                      <div className="absolute left-[8%] top-[15%] h-[70%] w-[30%] border-2 border-white/80">
+
+                        <div className="absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-[10px] font-semibold tracking-wide text-white">
+                          REFERENCE CARD
+                        </div>
+
+                      </div>
+
+                      {/* Test result */}
+                      <div className="absolute right-[8%] top-[15%] h-[70%] w-[30%] border-2 border-white/80">
+
+                        <div className="absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-[10px] font-semibold tracking-wide text-white">
+                          TEST RESULT
+                        </div>
+
+                      </div>
+
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Captured image */}
+              {capturedImage && (
+                <img
+                  src={capturedImage}
+                  alt="Captured test result"
+                  className="h-full w-full object-contain"
+                />
+              )}
+
+            </div>
+
+            {/* Camera controls */}
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+
+              {!capturedImage && (
+                <>
+                  <button
+                    type="button"
+                    onClick={captureImage}
+                    disabled={!cameraReady}
+                    className="flex-1 rounded-lg bg-[#174A7E] px-5 py-3 text-sm font-medium text-white transition hover:bg-[#0B1F3A] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Capture Image
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      fileInputRef.current?.click()
+                    }
+                    className="flex-1 rounded-lg border border-[#D9E1EA] bg-white px-5 py-3 text-sm font-medium text-[#174A7E] transition hover:bg-[#F7F9FC]"
+                  >
+                    Upload from Files
+                  </button>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                </>
+              )}
+
+              {capturedImage && (
+                <button
+                  type="button"
+                  onClick={retakeImage}
+                  className="w-full rounded-lg border border-[#D9E1EA] bg-white px-5 py-3 text-sm font-medium text-[#174A7E] transition hover:bg-[#F7F9FC]"
+                >
+                  Retake Image
+                </button>
+              )}
+
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4">
+                <p className="text-sm text-red-700">
+                  {error}
+                </p>
+              </div>
+            )}
+
+          </div>
+
+        </section>
+
+        {/* Location */}
+        <section className="mt-5 rounded-xl border border-[#D9E1EA] bg-white p-5">
+
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+
             <div>
-              <p className="text-[11px] font-medium text-[#667085]">
-                Test Workflow
+
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#667085]">
+                Test Location
               </p>
 
-              <h1 className="mt-0.5 text-[15px] font-semibold text-[#0B1F3A]">
-                Capture Test Result
-              </h1>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <div className="flex min-h-[calc(100vh-78px)]">
-        {/* Sidebar */}
-        <aside className="hidden w-[263px] border-r border-[#D9E1EA] bg-white md:block">
-          <div className="px-5 pt-6">
-            <p className="mb-3 text-[11px] font-semibold tracking-[0.08em] text-[#98A2B3]">
-              TEST WORKFLOW
-            </p>
-
-            <div className="flex items-center gap-3 rounded-md bg-[#EAF2F8] px-3 py-3 text-sm font-medium text-[#0B1F3A]">
-              <Camera size={18} />
-              <span>New Test</span>
-            </div>
-          </div>
-
-          {/* Operator */}
-          <div className="absolute bottom-0 flex w-[263px] items-center gap-3 border-t border-[#D9E1EA] px-5 py-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1F1F1F] text-sm font-medium text-white">
-              N
-            </div>
-
-            <div>
-              <p className="text-[11px] font-semibold text-[#172033]">
-                Operator OP-1042
+              <p className="mt-1 text-sm font-medium text-[#172033]">
+                Device GPS
               </p>
 
-              <p className="text-[11px] text-[#667085]">
-                Active session
+              <p className="mt-1 text-xs text-[#667085]">
+                Location is recorded with the digital test
+                record.
               </p>
-            </div>
-          </div>
-        </aside>
 
-        {/* Main content */}
-        <section className="flex-1 px-6 py-8 md:px-10">
-          <div className="mx-auto max-w-[865px]">
-            {/* Back */}
-            <Link
-              href="/test"
-              className="inline-flex items-center gap-2 text-[11px] text-[#667085] transition hover:text-[#174A7E]"
+            </div>
+
+            <div
+              className={`rounded-md px-3 py-2 text-xs font-medium ${
+                location
+                  ? "bg-green-50 text-green-700"
+                  : locationError
+                    ? "bg-red-50 text-red-700"
+                    : "bg-[#F7F9FC] text-[#667085]"
+              }`}
             >
-              <ArrowLeft size={14} />
-              Back to Test Details
-            </Link>
-
-            {/* Heading */}
-            <div className="mt-5">
-              <p className="text-[11px] font-semibold tracking-[0.12em] text-[#174A7E]">
-                STEP 02 / 04
-              </p>
-
-              <h2 className="mt-1 text-[20px] font-semibold text-[#0B1F3A]">
-                Capture Test Result
-              </h2>
-
-              <p className="mt-1 text-[12px] text-[#667085]">
-                Position the test result and reference colour card inside the
-                capture area before taking the image.
-              </p>
+              {location
+                ? "Location Ready"
+                : locationError
+                  ? "Location Unavailable"
+                  : "Getting Location"}
             </div>
 
-            {/* Step progress */}
-            <div className="mt-7 border border-[#D9E1EA] bg-white px-6 py-4">
-              <div className="flex items-center">
-                {/* Step 1 */}
-                <div className="flex items-center">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full border border-[#174A7E] bg-[#EAF2F8]">
-                    <CheckCircle2
-                      size={14}
-                      className="text-[#174A7E]"
-                    />
-                  </div>
+          </div>
 
-                  <span className="ml-2 text-[10px] font-medium text-[#174A7E]">
-                    Test Details
-                  </span>
-                </div>
+          {location && (
+            <div className="mt-4 border-t border-[#D9E1EA] pt-4">
 
-                <div className="mx-3 h-px flex-1 bg-[#174A7E]" />
+              <div className="grid gap-4 sm:grid-cols-2">
 
-                {/* Step 2 */}
-                <div className="flex items-center">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0B1F3A] text-[10px] font-semibold text-white">
-                    02
-                  </div>
+                <div>
+                  <p className="text-xs text-[#667085]">
+                    Latitude
+                  </p>
 
-                  <span className="ml-2 text-[10px] font-medium text-[#0B1F3A]">
-                    Capture
-                  </span>
-                </div>
-
-                <div className="mx-3 h-px flex-1 bg-[#D9E1EA]" />
-
-                {/* Step 3 */}
-                <div className="flex items-center">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full border border-[#D9E1EA] text-[10px] text-[#98A2B3]">
-                    03
-                  </div>
-
-                  <span className="ml-2 text-[10px] text-[#98A2B3]">
-                    Analysis
-                  </span>
-                </div>
-
-                <div className="mx-3 h-px flex-1 bg-[#D9E1EA]" />
-
-                {/* Step 4 */}
-                <div className="flex items-center">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full border border-[#D9E1EA] text-[10px] text-[#98A2B3]">
-                    04
-                  </div>
-
-                  <span className="ml-2 text-[10px] text-[#98A2B3]">
-                    Record
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Capture grid */}
-            <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_322px]">
-              {/* Camera card */}
-              <div className="border border-[#D9E1EA] bg-white">
-                <div className="flex items-center justify-between border-b border-[#D9E1EA] px-4 py-3">
-                  <div>
-                    <h3 className="text-[12px] font-semibold text-[#0B1F3A]">
-                      Image Capture
-                    </h3>
-
-                    <p className="mt-0.5 text-[10px] text-[#667085]">
-                      Use the rear camera when available.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 text-[10px]">
-                    <span
-                      className={`h-2 w-2 rounded-full ${
-                        cameraReady
-                          ? "bg-green-500"
-                          : capturedImage
-                            ? "bg-[#174A7E]"
-                            : "bg-amber-500"
-                      }`}
-                    />
-
-                    <span
-                      className={
-                        cameraReady
-                          ? "text-green-700"
-                          : capturedImage
-                            ? "text-[#174A7E]"
-                            : "text-amber-700"
-                      }
-                    >
-                      {cameraReady
-                        ? "Camera Ready"
-                        : capturedImage
-                          ? "Image Ready"
-                          : "Camera Unavailable"}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="p-4">
-                  {/* Preview area */}
-                  <div className="relative aspect-[4/3] overflow-hidden bg-[#8D8D8D]">
-                    {capturedImage ? (
-                      <>
-                        <img
-                          src={capturedImage}
-                          alt="Captured test result"
-                          className="h-full w-full object-contain"
-                        />
-
-                        <div className="absolute left-3 top-3 bg-[#0B1F3A] px-2 py-1 text-[9px] font-semibold text-white">
-                          CAPTURED IMAGE
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <video
-                          ref={videoRef}
-                          autoPlay
-                          muted
-                          playsInline
-                          className="h-full w-full object-cover"
-                        />
-
-                        {/* Capture frame */}
-                        <div className="pointer-events-none absolute inset-5 border border-white/70">
-                          {/* Reference card */}
-                          <div className="absolute left-[4%] top-[4%] h-[22%] w-[32%] border border-[#4EA5FF]">
-                            <span className="absolute -top-5 left-0 bg-[#0B1F3A] px-2 py-1 text-[9px] font-semibold text-white">
-                              REFERENCE CARD
-                            </span>
-                          </div>
-
-                          {/* Test result */}
-                          <div className="absolute bottom-[7%] right-[4%] h-[30%] w-[43%] border border-white">
-                            <span className="absolute -top-5 left-0 bg-[#0B1F3A] px-2 py-1 text-[9px] font-semibold text-white">
-                              TEST RESULT
-                            </span>
-                          </div>
-                        </div>
-                      </>
+                  <p className="mt-1 font-mono text-sm text-[#172033]">
+                    {location.latitude.toFixed(
+                      6
                     )}
-                  </div>
-
-                  {error && (
-                    <div className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">
-                      {error}
-                    </div>
-                  )}
-
-                  {/* Buttons */}
-                  {!capturedImage ? (
-                    <div className="mt-4 flex flex-col items-center">
-                      <button
-                        type="button"
-                        onClick={captureImage}
-                        disabled={!cameraReady}
-                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#0B1F3A] px-5 py-3 text-[11px] font-semibold text-white transition hover:bg-[#174A7E] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Camera size={16} />
-                        Capture Image
-                      </button>
-
-                      {/* Upload from files */}
-                      <label className="mt-3 inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-[#174A7E] bg-white px-5 py-3 text-[11px] font-semibold text-[#174A7E] transition hover:bg-[#EAF2F8]">
-                        <Upload size={16} />
-                        Upload from Files
-
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          onChange={handleFileUpload}
-                          className="hidden"
-                        />
-                      </label>
-
-                      <p className="mt-2 text-[10px] text-[#98A2B3]">
-                        JPG, PNG or WebP
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="mt-4 flex flex-col items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={retakeImage}
-                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#174A7E] bg-white px-5 py-3 text-[11px] font-semibold text-[#174A7E] transition hover:bg-[#EAF2F8]"
-                      >
-                        <Camera size={16} />
-                        Retake Image
-                      </button>
-
-                      <Link
-                        href="/test/analysis"
-                        className="inline-flex items-center justify-center rounded-lg bg-[#0B1F3A] px-6 py-3 text-[11px] font-semibold text-white transition hover:bg-[#174A7E]"
-                      >
-                        Continue to Analysis
-                      </Link>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Status card */}
-              <div className="border border-[#D9E1EA] bg-white">
-                <div className="border-b border-[#D9E1EA] px-4 py-3">
-                  <h3 className="text-[12px] font-semibold text-[#0B1F3A]">
-                    Capture Status
-                  </h3>
-
-                  <p className="mt-0.5 text-[10px] text-[#667085]">
-                    Image readiness checks
                   </p>
                 </div>
 
                 <div>
-                  {/* Reference */}
-                  <div className="flex items-center justify-between border-b border-[#D9E1EA] px-4 py-4">
-                    <div>
-                      <p className="text-[10px] font-semibold text-[#172033]">
-                        Reference Card
-                      </p>
+                  <p className="text-xs text-[#667085]">
+                    Longitude
+                  </p>
 
-                      <p className="mt-1 text-[10px] text-[#98A2B3]">
-                        Required for colour calibration
-                      </p>
-                    </div>
-
-                    <span className="rounded-md border border-[#D9E1EA] bg-[#F7F9FC] px-2 py-1 text-[10px] text-[#667085]">
-                      Waiting
-                    </span>
-                  </div>
-
-                  {/* Image quality */}
-                  <div className="flex items-center justify-between border-b border-[#D9E1EA] px-4 py-4">
-                    <div>
-                      <p className="text-[10px] font-semibold text-[#172033]">
-                        Image Quality
-                      </p>
-
-                      <p className="mt-1 text-[10px] text-[#98A2B3]">
-                        Focus and exposure check
-                      </p>
-                    </div>
-
-                    <span className="rounded-md border border-[#D9E1EA] bg-[#F7F9FC] px-2 py-1 text-[10px] text-[#667085]">
-                      Waiting
-                    </span>
-                  </div>
-
-                  {/* Lighting */}
-                  <div className="flex items-center justify-between border-b border-[#D9E1EA] px-4 py-4">
-                    <div>
-                      <p className="text-[10px] font-semibold text-[#172033]">
-                        Lighting
-                      </p>
-
-                      <p className="mt-1 text-[10px] text-[#98A2B3]">
-                        Environmental lighting check
-                      </p>
-                    </div>
-
-                    <span className="rounded-md border border-[#D9E1EA] bg-[#F7F9FC] px-2 py-1 text-[10px] text-[#667085]">
-                      Waiting
-                    </span>
-                  </div>
-
-                  {/* Capture */}
-                  <div className="flex items-center justify-between border-b border-[#D9E1EA] px-4 py-4">
-                    <div>
-                      <p className="text-[10px] font-semibold text-[#172033]">
-                        Capture
-                      </p>
-
-                      <p className="mt-1 text-[10px] text-[#98A2B3]">
-                        Ready when framing is correct
-                      </p>
-                    </div>
-
-                    <span
-                      className={`rounded-md border px-2 py-1 text-[10px] ${
-                        capturedImage
-                          ? "border-green-200 bg-green-50 text-green-700"
-                          : "border-green-200 bg-green-50 text-green-700"
-                      }`}
-                    >
-                      Ready
-                    </span>
-                  </div>
-
-                  {/* Info */}
-                  <div className="flex gap-3 px-4 py-5">
-                    <ShieldCheck
-                      size={18}
-                      className="mt-0.5 shrink-0 text-[#174A7E]"
-                    />
-
-                    <p className="text-[11px] leading-5 text-[#667085]">
-                      The reference colour card is used to help normalize
-                      image conditions before color analysis.
-                    </p>
-                  </div>
+                  <p className="mt-1 font-mono text-sm text-[#172033]">
+                    {location.longitude.toFixed(
+                      6
+                    )}
+                  </p>
                 </div>
+
               </div>
-            </div>
 
-            {/* Guidance */}
-            <div className="mt-4 border-l-2 border-[#174A7E] bg-white px-4 py-3">
-              <p className="text-[11px] text-[#667085]">
-                <span className="font-semibold text-[#174A7E]">
-                  Capture guidance:
-                </span>{" "}
-                Keep both the reference card and test-result area visible,
-                avoid strong shadows, and keep the camera steady.
+            </div>
+          )}
+
+          {locationError && (
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
+
+              <p className="text-xs leading-5 text-red-700">
+                {locationError}
               </p>
+
+              <button
+                type="button"
+                onClick={getDeviceLocation}
+                className="mt-2 text-xs font-semibold text-red-700 underline"
+              >
+                Try location again
+              </button>
+
+            </div>
+          )}
+
+          {locationLoading && (
+            <div className="mt-4">
+
+              <div className="h-1 overflow-hidden rounded-full bg-[#EAF2F8]">
+                <div className="h-full w-1/2 animate-pulse bg-[#174A7E]" />
+              </div>
+
+            </div>
+          )}
+
+        </section>
+
+        {/* Continue */}
+        <section className="mt-5 rounded-xl border border-[#D9E1EA] bg-white p-5">
+
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+
+            <div>
+
+              <p className="text-sm font-semibold text-[#172033]">
+                Ready for analysis?
+              </p>
+
+              <p className="mt-1 text-xs leading-5 text-[#667085]">
+                The captured image and test location will
+                be passed to the analysis stage.
+              </p>
+
             </div>
 
-            {/* Disclaimer */}
-            <div className="mt-4 text-[10px] leading-5 text-[#98A2B3]">
-              Presumptive result. NarcoLens provides digital support for
-              field-test interpretation and documentation. Confirmatory
-              laboratory testing remains necessary where applicable.
-            </div>
+            <button
+              type="button"
+              onClick={continueToAnalysis}
+              disabled={
+                !capturedImage ||
+                !location
+              }
+              className="rounded-lg bg-[#174A7E] px-6 py-3 text-sm font-medium text-white transition hover:bg-[#0B1F3A] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Continue to Analysis →
+            </button>
+
           </div>
+
         </section>
+
+        {/* Disclaimer */}
+        <div className="mt-5 border-l-2 border-[#174A7E] bg-white px-4 py-3">
+
+          <p className="text-xs leading-5 text-[#667085]">
+
+            <span className="font-semibold text-[#174A7E]">
+              Presumptive field testing:
+            </span>{" "}
+
+            NarcoLens provides digital support for field-test
+            interpretation and documentation. Results do not
+            replace confirmatory laboratory testing.
+
+          </p>
+
+        </div>
+
+        {/* Hidden canvas */}
+        <canvas
+          ref={canvasRef}
+          className="hidden"
+        />
+
       </div>
+
     </main>
   );
 }
