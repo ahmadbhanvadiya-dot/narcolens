@@ -80,7 +80,7 @@ export default function Home() {
             />
 
             <NavItem
-              href="/records"
+              href="/test-records"
               icon={<ClipboardList size={17} />}
               label="Test Records"
             />
