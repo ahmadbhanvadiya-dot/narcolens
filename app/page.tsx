@@ -220,7 +220,7 @@ export default function Home() {
                 </div>
 
                 <Link
-                  href="/records"
+                  href="/test-records"
                   className="flex items-center gap-1 text-xs font-medium text-[#174A7E] hover:underline"
                 >
                   View records
