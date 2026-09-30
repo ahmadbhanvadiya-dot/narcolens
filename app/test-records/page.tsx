@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import AppShell from "@/app/components/AppShell";
 
 type TestRecord = {
   id: string;
@@ -65,8 +66,8 @@ export default function TestRecordsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#F7F9FC] p-8">
-      <div className="mx-auto max-w-7xl">
+  <AppShell title="Test Records">
+      
 
         {/* Header */}
         <div>
@@ -290,7 +291,7 @@ export default function TestRecordsPage() {
           </p>
         </div>
 
-      </div>
-    </main>
+      
+    </AppShell>
   );
 }

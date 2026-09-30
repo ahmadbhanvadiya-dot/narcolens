@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import AppShell from "@/app/components/AppShell";
 
 type TestRecord = {
   record_id: string;
@@ -177,8 +178,7 @@ export default function VerifyPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#F7F9FC] p-8">
-      <div className="mx-auto max-w-5xl">
+  <AppShell title="Verify Digital Record">
 
         {/* Header */}
         <div>
@@ -428,7 +428,6 @@ export default function VerifyPage() {
 
         </div>
 
-      </div>
-    </main>
+      </AppShell>
   );
 }
