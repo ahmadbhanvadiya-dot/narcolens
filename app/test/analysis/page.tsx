@@ -3,66 +3,139 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
+type TestMetadata = {
+  caseId: string;
+  testKit: string;
+  reagent: string;
+  profileId: string;
+  profileVersion: string;
+  operatorId: string;
+  startedAt: string;
+};
+
+type AnalysisData = {
+  result: string;
+  confidence: number;
+  quality: string;
+  brightness: number;
+  contrast: number;
+  sharpness: number;
+
+  rgb: {
+    r: number;
+    g: number;
+    b: number;
+  };
+
+  hsv: {
+    h: number;
+    s: number;
+    v: number;
+  };
+
+  lab: {
+    l: number;
+    a: number;
+    b: number;
+  };
+
+  reference_lab?: {
+    l: number;
+    a: number;
+    b: number;
+  };
+
+  delta_e: number;
+
+  calibration?: {
+    enabled: boolean;
+  };
+
+  prototype_notice?: string;
+};
+
 type AnalysisResponse = {
   status: string;
+
   image: {
     width: number;
     height: number;
   };
-  analysis: {
-    result: string;
-    confidence: number;
-    quality: string;
-    brightness: number;
-    contrast: number;
-    sharpness: number;
-    rgb: {
-      r: number;
-      g: number;
-      b: number;
-    };
-    hsv: {
-      h: number;
-      s: number;
-      v: number;
-    };
-    lab: {
-      l: number;
-      a: number;
-      b: number;
-    };
-    reference_lab: {
-      l: number;
-      a: number;
-      b: number;
-    };
-    delta_e: number;
-  };
+
+  analysis: AnalysisData;
 };
 
 export default function AnalysisPage() {
-  const [image, setImage] = useState("");
+  const [image, setImage] =
+    useState("");
+
+  const [metadata, setMetadata] =
+    useState<TestMetadata | null>(null);
+
   const [analysis, setAnalysis] =
     useState<AnalysisResponse | null>(null);
 
-  const [analyzing, setAnalyzing] = useState(false);
-  const [error, setError] = useState("");
+  const [analyzing, setAnalyzing] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
 
   useEffect(() => {
-    const capturedImage = sessionStorage.getItem(
-      "narcolens_captured_image"
-    );
+    const capturedImage =
+      sessionStorage.getItem(
+        "narcolens_captured_image"
+      );
 
-    if (capturedImage) {
-      setImage(capturedImage);
+    const savedMetadata =
+      sessionStorage.getItem(
+        "narcolens_test_metadata"
+      );
+
+    if (!capturedImage) {
+      setError(
+        "No captured image was found."
+      );
     } else {
-      setError("No captured image was found.");
+      setImage(capturedImage);
+    }
+
+    if (!savedMetadata) {
+      setError(
+        "Test profile information was not found. Please restart the test."
+      );
+      return;
+    }
+
+    try {
+      const parsed =
+        JSON.parse(savedMetadata);
+
+      setMetadata(parsed);
+    } catch (error) {
+      console.error(
+        "Unable to read test metadata:",
+        error
+      );
+
+      setError(
+        "Unable to read the selected test profile."
+      );
     }
   }, []);
 
   async function runAnalysis() {
     if (!image) {
-      setError("No captured image available.");
+      setError(
+        "No captured image is available."
+      );
+      return;
+    }
+
+    if (!metadata) {
+      setError(
+        "No test profile is available."
+      );
       return;
     }
 
@@ -71,12 +144,20 @@ export default function AnalysisPage() {
       setError("");
       setAnalysis(null);
 
-      // Convert base64 image into a Blob
-      const response = await fetch(image);
-      const blob = await response.blob();
+      /*
+       * Convert captured image into Blob
+       */
+      const response =
+        await fetch(image);
 
-      // Create multipart form data
-      const formData = new FormData();
+      const blob =
+        await response.blob();
+
+      /*
+       * Create multipart request
+       */
+      const formData =
+        new FormData();
 
       formData.append(
         "file",
@@ -84,38 +165,81 @@ export default function AnalysisPage() {
         "narcolens-capture.jpg"
       );
 
-      // Send image to FastAPI
-      const apiUrl =
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://127.0.0.1:8000";
+      /*
+       * Send selected analysis profile
+       * alongside the image.
+       */
+      formData.append(
+        "profile_id",
+        metadata.profileId
+      );
 
-const apiResponse = await fetch(
-  `${apiUrl}/analyze`,
-  {
-    method: "POST",
-    body: formData,
-  }
-);
+      formData.append(
+        "profile_version",
+        metadata.profileVersion
+      );
+
+      /*
+       * Also send the reagent name.
+       * This makes the request easier to
+       * inspect/debug on the backend.
+       */
+      formData.append(
+        "reagent",
+        metadata.reagent
+      );
+
+      const apiUrl =
+        process.env.NEXT_PUBLIC_API_URL ||
+        "http://127.0.0.1:8000";
+
+      const apiResponse =
+        await fetch(
+          `${apiUrl}/analyze`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
 
       if (!apiResponse.ok) {
-        const errorData = await apiResponse.json();
+        let message =
+          "Image analysis failed.";
 
-        throw new Error(
-          errorData.detail || "Analysis failed."
-        );
+        try {
+          const errorData =
+            await apiResponse.json();
+
+          message =
+            errorData.detail ||
+            message;
+        } catch {
+          // Keep default message.
+        }
+
+        throw new Error(message);
       }
 
       const data: AnalysisResponse =
         await apiResponse.json();
 
-        sessionStorage.setItem(
-  "narcolens_analysis",
-  JSON.stringify(data.analysis)
-);
+      /*
+       * Store only the analysis object.
+       */
+      sessionStorage.setItem(
+        "narcolens_analysis",
+        JSON.stringify(
+          data.analysis
+        )
+      );
 
       setAnalysis(data);
+
     } catch (error) {
-      console.error(error);
+      console.error(
+        "Analysis error:",
+        error
+      );
 
       setError(
         error instanceof Error
@@ -142,13 +266,14 @@ const apiResponse = await fetch(
           </h1>
 
           <p className="mt-2 text-[#667085]">
-            Analyze the captured field-test image using
-            the NarcoLens computer-vision engine.
+            Analyze the captured field-test image
+            using the selected test profile.
           </p>
         </div>
 
         {/* Workflow */}
         <div className="mt-8 flex items-center gap-3 text-sm">
+
           <div className="text-[#667085]">
             01 Test Details
           </div>
@@ -170,13 +295,64 @@ const apiResponse = await fetch(
           <div className="text-[#98A2B3]">
             04 Record
           </div>
+
         </div>
 
+        {/* Current Test */}
+        {metadata && (
+          <div className="mt-6 border border-[#D9E1EA] bg-white">
+
+            <div className="border-b border-[#D9E1EA] px-5 py-4">
+
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#667085]">
+                Current Test
+              </p>
+
+            </div>
+
+            <div className="grid gap-4 px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
+
+              <InfoItem
+                label="Case ID"
+                value={metadata.caseId}
+              />
+
+              <InfoItem
+                label="Reagent"
+                value={metadata.reagent}
+              />
+
+              <InfoItem
+                label="Profile"
+                value={metadata.profileId}
+              />
+
+              <InfoItem
+                label="Version"
+                value={metadata.profileVersion}
+              />
+
+            </div>
+
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="mt-6 border border-red-200 bg-red-50 px-5 py-4">
+
+            <p className="text-sm font-medium text-red-700">
+              {error}
+            </p>
+
+          </div>
+        )}
+
         {/* Main */}
-        <div className="mt-8 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+        <div className="mt-6 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
 
           {/* Image */}
-          <section className="rounded-xl border border-[#D9E1EA] bg-white p-6">
+          <section className="border border-[#D9E1EA] bg-white p-6">
 
             <div className="flex items-center justify-between">
 
@@ -186,12 +362,13 @@ const apiResponse = await fetch(
                 </h2>
 
                 <p className="mt-1 text-sm text-[#667085]">
-                  Image submitted to the CV analysis engine.
+                  Image submitted to the analysis engine.
                 </p>
               </div>
 
               <span className="rounded-md bg-[#EAF2F8] px-3 py-1 text-xs font-medium text-[#174A7E]">
-                OPENCV
+                {metadata?.profileId ||
+                  "PROFILE"}
               </span>
 
             </div>
@@ -214,12 +391,16 @@ const apiResponse = await fetch(
 
             {image && (
               <button
+                type="button"
                 onClick={runAnalysis}
-                disabled={analyzing}
+                disabled={
+                  analyzing ||
+                  !metadata
+                }
                 className="mt-5 w-full rounded-lg bg-[#174A7E] px-5 py-3 text-sm font-medium text-white transition hover:bg-[#0B1F3A] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {analyzing
-                  ? "Analyzing with OpenCV..."
+                  ? "Analyzing..."
                   : analysis
                     ? "Run Analysis Again"
                     : "Run Analysis"}
@@ -228,60 +409,72 @@ const apiResponse = await fetch(
 
           </section>
 
-          {/* Analysis */}
-          <section className="rounded-xl border border-[#D9E1EA] bg-white p-6">
+          {/* Results */}
+          <section className="border border-[#D9E1EA] bg-white p-6">
 
             <h2 className="font-semibold text-[#0B1F3A]">
               Analysis Results
             </h2>
 
             <p className="mt-1 text-sm text-[#667085]">
-              Results returned by the NarcoLens FastAPI
+              Results returned by the NarcoLens
               analysis engine.
             </p>
 
-            {!analysis && !analyzing && (
-              <div className="mt-8 rounded-lg border border-[#D9E1EA] bg-[#F7F9FC] p-5">
+            {/* Waiting */}
+            {!analysis &&
+              !analyzing && (
+                <div className="mt-8 border border-[#D9E1EA] bg-[#F7F9FC] p-5">
 
-                <p className="text-sm text-[#667085]">
-                  The image is ready for analysis.
-                </p>
+                  <p className="text-sm text-[#667085]">
+                    The image is ready for analysis.
+                  </p>
 
-                <p className="mt-2 text-xs text-[#98A2B3]">
-                  Click "Run Analysis" to send the image
-                  to the OpenCV backend.
-                </p>
+                  <p className="mt-2 text-xs text-[#98A2B3]">
+                    The selected{" "}
+                    <strong>
+                      {metadata?.reagent ||
+                        "test profile"}
+                    </strong>{" "}
+                    will be sent to the analysis
+                    engine.
+                  </p>
 
-              </div>
-            )}
+                </div>
+              )}
 
+            {/* Loading */}
             {analyzing && (
-              <div className="mt-8 rounded-lg border border-[#D9E1EA] bg-[#F7F9FC] p-5">
+              <div className="mt-8 border border-[#D9E1EA] bg-[#F7F9FC] p-5">
 
                 <p className="font-medium text-[#174A7E]">
-                  Analyzing image...
+                  Running profile-aware analysis...
                 </p>
 
                 <p className="mt-2 text-sm text-[#667085]">
-                  OpenCV is extracting image and color
-                  characteristics.
+                  Processing the image against the
+                  selected test profile.
                 </p>
 
               </div>
             )}
 
+            {/* Results */}
             {analysis && (
               <div className="mt-6 space-y-4">
 
                 {/* Result */}
-                <div className="rounded-lg border border-[#D9E1EA] p-5">
+                <div className="border border-[#D9E1EA] p-5">
 
                   <p className="text-xs font-semibold uppercase tracking-wide text-[#667085]">
                     Preliminary Result
                   </p>
 
                   <p className="mt-2 text-2xl font-semibold text-[#174A7E]">
-                    {analysis.analysis.result}
+                    {
+                      analysis.analysis
+                        .result
+                    }
                   </p>
 
                   <div className="mt-4 flex items-center justify-between">
@@ -291,8 +484,8 @@ const apiResponse = await fetch(
                     </span>
 
                     <span className="font-semibold text-[#172033]">
-                      {Math.round(
-                        analysis.analysis.confidence * 100
+                      {analysis.analysis.confidence.toFixed(
+                        2
                       )}
                       %
                     </span>
@@ -301,8 +494,8 @@ const apiResponse = await fetch(
 
                 </div>
 
-                {/* Image Quality */}
-                <div className="rounded-lg border border-[#D9E1EA] p-4">
+                {/* Quality */}
+                <div className="border border-[#D9E1EA] p-4">
 
                   <p className="text-xs font-semibold uppercase tracking-wide text-[#667085]">
                     Image Quality
@@ -310,42 +503,48 @@ const apiResponse = await fetch(
 
                   <div className="mt-3 grid grid-cols-3 gap-3">
 
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        Quality
-                      </p>
+                    <Metric
+                      label="Quality"
+                      value={
+                        analysis.analysis
+                          .quality
+                      }
+                    />
 
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.quality}
-                      </p>
-                    </div>
+                    <Metric
+                      label="Brightness"
+                      value={String(
+                        analysis.analysis
+                          .brightness
+                      )}
+                    />
 
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        Brightness
-                      </p>
+                    <Metric
+                      label="Contrast"
+                      value={String(
+                        analysis.analysis
+                          .contrast
+                      )}
+                    />
 
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.brightness}
-                      </p>
-                    </div>
+                  </div>
 
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        Sharpness
-                      </p>
+                  <div className="mt-3">
 
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.sharpness}
-                      </p>
-                    </div>
+                    <Metric
+                      label="Sharpness"
+                      value={String(
+                        analysis.analysis
+                          .sharpness
+                      )}
+                    />
 
                   </div>
 
                 </div>
 
                 {/* RGB */}
-                <div className="rounded-lg border border-[#D9E1EA] p-4">
+                <div className="border border-[#D9E1EA] p-4">
 
                   <p className="text-xs font-semibold uppercase tracking-wide text-[#667085]">
                     RGB
@@ -353,42 +552,36 @@ const apiResponse = await fetch(
 
                   <div className="mt-3 grid grid-cols-3 gap-3">
 
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        R
-                      </p>
+                    <Metric
+                      label="R"
+                      value={String(
+                        analysis.analysis
+                          .rgb.r
+                      )}
+                    />
 
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.rgb.r}
-                      </p>
-                    </div>
+                    <Metric
+                      label="G"
+                      value={String(
+                        analysis.analysis
+                          .rgb.g
+                      )}
+                    />
 
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        G
-                      </p>
-
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.rgb.g}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        B
-                      </p>
-
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.rgb.b}
-                      </p>
-                    </div>
+                    <Metric
+                      label="B"
+                      value={String(
+                        analysis.analysis
+                          .rgb.b
+                      )}
+                    />
 
                   </div>
 
                 </div>
 
                 {/* HSV */}
-                <div className="rounded-lg border border-[#D9E1EA] p-4">
+                <div className="border border-[#D9E1EA] p-4">
 
                   <p className="text-xs font-semibold uppercase tracking-wide text-[#667085]">
                     HSV
@@ -396,42 +589,33 @@ const apiResponse = await fetch(
 
                   <div className="mt-3 grid grid-cols-3 gap-3">
 
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        Hue
-                      </p>
+                    <Metric
+                      label="Hue"
+                      value={`${analysis.analysis.hsv.h}°`}
+                    />
 
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.hsv.h}°
-                      </p>
-                    </div>
+                    <Metric
+                      label="Saturation"
+                      value={String(
+                        analysis.analysis
+                          .hsv.s
+                      )}
+                    />
 
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        Saturation
-                      </p>
-
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.hsv.s}%
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        Value
-                      </p>
-
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.hsv.v}%
-                      </p>
-                    </div>
+                    <Metric
+                      label="Value"
+                      value={String(
+                        analysis.analysis
+                          .hsv.v
+                      )}
+                    />
 
                   </div>
 
                 </div>
 
                 {/* CIELAB */}
-                <div className="rounded-lg border border-[#D9E1EA] p-4">
+                <div className="border border-[#D9E1EA] p-4">
 
                   <p className="text-xs font-semibold uppercase tracking-wide text-[#667085]">
                     CIELAB
@@ -439,42 +623,106 @@ const apiResponse = await fetch(
 
                   <div className="mt-3 grid grid-cols-3 gap-3">
 
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        L*
-                      </p>
+                    <Metric
+                      label="L*"
+                      value={String(
+                        analysis.analysis
+                          .lab.l
+                      )}
+                    />
 
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.lab.l}
-                      </p>
-                    </div>
+                    <Metric
+                      label="a*"
+                      value={String(
+                        analysis.analysis
+                          .lab.a
+                      )}
+                    />
 
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        a*
-                      </p>
-
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.lab.a}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-[#667085]">
-                        b*
-                      </p>
-
-                      <p className="font-semibold text-[#172033]">
-                        {analysis.analysis.lab.b}
-                      </p>
-                    </div>
+                    <Metric
+                      label="b*"
+                      value={String(
+                        analysis.analysis
+                          .lab.b
+                      )}
+                    />
 
                   </div>
 
                 </div>
 
+                {/* Calibration */}
+                <div className="border border-[#D9E1EA] p-4">
+
+                  <div className="flex items-center justify-between">
+
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#667085]">
+                        Reference Calibration
+                      </p>
+
+                      <p className="mt-1 text-xs text-[#667085]">
+                        Calibration state returned by
+                        the analysis engine.
+                      </p>
+                    </div>
+
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-medium ${
+                        analysis.analysis
+                          .calibration
+                          ?.enabled
+                          ? "bg-green-50 text-green-700"
+                          : "bg-amber-50 text-amber-700"
+                      }`}
+                    >
+                      {analysis.analysis
+                        .calibration
+                        ?.enabled
+                        ? "Active"
+                        : "Unavailable"}
+                    </span>
+
+                  </div>
+
+                  {analysis.analysis
+                    .reference_lab && (
+                    <div className="mt-4 grid grid-cols-3 gap-3">
+
+                      <Metric
+                        label="Reference L*"
+                        value={String(
+                          analysis.analysis
+                            .reference_lab
+                            .l
+                        )}
+                      />
+
+                      <Metric
+                        label="Reference a*"
+                        value={String(
+                          analysis.analysis
+                            .reference_lab
+                            .a
+                        )}
+                      />
+
+                      <Metric
+                        label="Reference b*"
+                        value={String(
+                          analysis.analysis
+                            .reference_lab
+                            .b
+                        )}
+                      />
+
+                    </div>
+                  )}
+
+                </div>
+
                 {/* Delta E */}
-                <div className="rounded-lg border border-[#D9E1EA] p-4">
+                <div className="border border-[#D9E1EA] p-4">
 
                   <div className="flex items-center justify-between">
 
@@ -483,18 +731,39 @@ const apiResponse = await fetch(
                         Colour Difference
                       </p>
 
-                      <p className="mt-1 text-sm text-[#667085]">
+                      <p className="mt-1 text-xs text-[#667085]">
                         CIE76 ΔE
                       </p>
                     </div>
 
                     <p className="text-2xl font-semibold text-[#174A7E]">
-                      {analysis.analysis.delta_e}
+                      {analysis.analysis.delta_e.toFixed(
+                        2
+                      )}
                     </p>
 
                   </div>
 
                 </div>
+
+                {/* Notice */}
+                {analysis.analysis
+                  .prototype_notice && (
+                  <div className="border border-amber-200 bg-amber-50 p-4">
+
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+                      Prototype Notice
+                    </p>
+
+                    <p className="mt-2 text-xs leading-5 text-amber-700">
+                      {
+                        analysis.analysis
+                          .prototype_notice
+                      }
+                    </p>
+
+                  </div>
+                )}
 
                 {/* Continue */}
                 <Link
@@ -507,29 +776,22 @@ const apiResponse = await fetch(
               </div>
             )}
 
-            {error && (
-              <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
-                <p className="text-sm text-red-700">
-                  {error}
-                </p>
-              </div>
-            )}
-
           </section>
 
         </div>
 
         {/* Disclaimer */}
-        <div className="mt-6 rounded-lg border border-[#D9E1EA] bg-white p-4">
+        <div className="mt-6 border border-[#D9E1EA] bg-white p-4">
 
           <p className="text-xs leading-5 text-[#667085]">
 
             <span className="font-semibold text-[#172033]">
               Presumptive analysis:
             </span>{" "}
-            NarcoLens provides digital support for field-test
-            interpretation and documentation. Results do not
-            replace confirmatory laboratory testing.
+            NarcoLens provides digital support for
+            field-test interpretation and documentation.
+            Results do not replace confirmatory
+            laboratory testing.
 
           </p>
 
@@ -537,5 +799,51 @@ const apiResponse = await fetch(
 
       </div>
     </main>
+  );
+}
+
+/*
+ * ------------------------------------------------------
+ * UI helpers
+ * ------------------------------------------------------
+ */
+
+function InfoItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <p className="text-[10px] font-medium uppercase tracking-wide text-[#98A2B3]">
+        {label}
+      </p>
+
+      <p className="mt-1 truncate text-xs font-medium text-[#172033]">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <p className="text-xs text-[#667085]">
+        {label}
+      </p>
+
+      <p className="mt-1 font-semibold text-[#172033]">
+        {value}
+      </p>
+    </div>
   );
 }
