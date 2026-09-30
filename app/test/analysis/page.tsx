@@ -108,6 +108,11 @@ const apiResponse = await fetch(
       const data: AnalysisResponse =
         await apiResponse.json();
 
+        sessionStorage.setItem(
+  "narcolens_analysis",
+  JSON.stringify(data.analysis)
+);
+
       setAnalysis(data);
     } catch (error) {
       console.error(error);
