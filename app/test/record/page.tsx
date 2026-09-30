@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import Link from "next/link";
 
 type SavedAnalysis = {
   result: string;
@@ -346,17 +347,40 @@ export default function RecordPage() {
           </div>
 
           {/* Save Button */}
-          <button
-            onClick={saveRecord}
-            disabled={saving || saved}
-            className="mt-8 rounded-lg bg-[#174A7E] px-5 py-3 font-medium text-white transition hover:bg-[#0B1F3A] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {saving
-              ? "Saving..."
-              : saved
-                ? "Record Saved ✓"
-                : "Save Record"}
-          </button>
+          {/* Actions */}
+<div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+
+  <button
+    onClick={saveRecord}
+    disabled={saving || saved}
+    className="rounded-lg bg-[#174A7E] px-5 py-3 font-medium text-white transition hover:bg-[#0B1F3A] disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    {saving
+      ? "Saving..."
+      : saved
+        ? "Record Saved ✓"
+        : "Save Record"}
+  </button>
+
+  {saved && (
+    <>
+      <Link
+        href="/test"
+        className="rounded-lg border border-[#D9E1EA] bg-white px-5 py-3 text-center font-medium text-[#174A7E] transition hover:bg-[#F7F9FC]"
+      >
+        Start New Test
+      </Link>
+
+      <Link
+        href="/"
+        className="rounded-lg border border-[#D9E1EA] bg-white px-5 py-3 text-center font-medium text-[#172033] transition hover:bg-[#F7F9FC]"
+      >
+        Back to Dashboard
+      </Link>
+    </>
+  )}
+
+</div>
 
           {/* Error */}
           {saveError && (
