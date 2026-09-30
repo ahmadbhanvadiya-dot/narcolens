@@ -85,13 +85,17 @@ export default function AnalysisPage() {
       );
 
       // Send image to FastAPI
-      const apiResponse = await fetch(
-        "http://127.0.0.1:8000/analyze",
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+      const apiUrl =
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://127.0.0.1:8000";
+
+const apiResponse = await fetch(
+  `${apiUrl}/analyze`,
+  {
+    method: "POST",
+    body: formData,
+  }
+);
 
       if (!apiResponse.ok) {
         const errorData = await apiResponse.json();
