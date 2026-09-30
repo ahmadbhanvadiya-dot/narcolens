@@ -1,140 +1,207 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import AppShell from "@/app/components/AppShell";
 import { supabase } from "@/lib/supabase";
-import Link from "next/link";
 
-type SavedAnalysis = {
-  result: string;
-  confidence: number;
+type AnalysisResult = {
+  result?: string;
+  confidence?: number;
   quality?: string;
   brightness?: number;
   contrast?: number;
   sharpness?: number;
+  rgb?: {
+    r?: number;
+    g?: number;
+    b?: number;
+  };
+  hsv?: {
+    h?: number;
+    s?: number;
+    v?: number;
+  };
+  lab?: {
+    l?: number;
+    a?: number;
+    b?: number;
+  };
   delta_e?: number;
 };
 
-export default function RecordPage() {
-  const [recordId, setRecordId] = useState("");
-  const [capturedImage, setCapturedImage] = useState("");
+type TestLocation = {
+  latitude: number;
+  longitude: number;
+  timestamp?: string;
+};
 
-  const [analysisResult, setAnalysisResult] = useState("");
-  const [confidence, setConfidence] = useState(0);
+export default function DigitalRecordPage() {
+  const router = useRouter();
+
+  const [image, setImage] = useState<string | null>(null);
+  const [analysis, setAnalysis] =
+    useState<AnalysisResult | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState("");
-  const [imageHash, setImageHash] = useState("");
+  const [error, setError] = useState("");
+
+  const [recordId, setRecordId] = useState("");
+
+  const [location, setLocation] =
+    useState<TestLocation | null>(null);
 
   useEffect(() => {
-    setRecordId(`NLC-${Date.now()}`);
-
-    const image = sessionStorage.getItem(
+    const capturedImage = sessionStorage.getItem(
       "narcolens_captured_image"
     );
-
-    if (image) {
-      setCapturedImage(image);
-    }
 
     const savedAnalysis = sessionStorage.getItem(
       "narcolens_analysis"
     );
 
+    const savedLocation = sessionStorage.getItem(
+      "narcolens_test_location"
+    );
+
+    if (capturedImage) {
+      setImage(capturedImage);
+    }
+
     if (savedAnalysis) {
       try {
-        const parsed: SavedAnalysis = JSON.parse(
-          savedAnalysis
+        setAnalysis(
+          JSON.parse(savedAnalysis)
         );
-
-        setAnalysisResult(parsed.result || "");
-
-        setConfidence(
-          Math.round(
-            (parsed.confidence || 0) * 100
-          )
-        );
-      } catch (error) {
+      } catch (err) {
         console.error(
-          "Unable to read saved analysis:",
-          error
+          "Unable to read analysis:",
+          err
+        );
+      }
+    }
+
+    if (savedLocation) {
+      try {
+        const parsed =
+          JSON.parse(savedLocation);
+
+        if (
+          typeof parsed.latitude === "number" &&
+          typeof parsed.longitude === "number"
+        ) {
+          setLocation({
+            latitude: parsed.latitude,
+            longitude: parsed.longitude,
+            timestamp:
+              typeof parsed.timestamp ===
+              "string"
+                ? parsed.timestamp
+                : undefined,
+          });
+        }
+      } catch (err) {
+        console.error(
+          "Unable to read location:",
+          err
         );
       }
     }
   }, []);
 
-  async function generateSHA256(data: ArrayBuffer) {
-    const hashBuffer = await crypto.subtle.digest(
-      "SHA-256",
-      data
+  const generateRecordId = () => {
+    return `NLC-${Date.now()}`;
+  };
+
+  const calculateSHA256 = async (
+    blob: Blob
+  ) => {
+    const buffer =
+      await blob.arrayBuffer();
+
+    const hashBuffer =
+      await crypto.subtle.digest(
+        "SHA-256",
+        buffer
+      );
+
+    const hashArray = Array.from(
+      new Uint8Array(hashBuffer)
     );
 
-    return Array.from(
-      new Uint8Array(hashBuffer)
-    )
+    return hashArray
       .map((byte) =>
         byte.toString(16).padStart(2, "0")
       )
       .join("");
-  }
+  };
 
-  async function saveRecord() {
-    if (!recordId) {
-      setSaveError(
-        "Record ID is still being generated."
-      );
-      return;
-    }
-
-    if (!capturedImage) {
-      setSaveError(
+  const saveRecord = async () => {
+    if (!image) {
+      setError(
         "No captured image was found."
       );
       return;
     }
 
-    if (!analysisResult) {
-      setSaveError(
-        "No analysis result was found. Please run the image analysis first."
+    if (!analysis) {
+      setError(
+        "No analysis result was found."
       );
       return;
     }
 
+    setSaving(true);
+    setError("");
+
     try {
-      setSaving(true);
-      setSaveError("");
+      /*
+       * Generate unique record ID
+       */
+      const newRecordId =
+        generateRecordId();
 
-      // Convert captured image to Blob
-      const response = await fetch(
-        capturedImage
-      );
+      setRecordId(newRecordId);
 
-      const blob = await response.blob();
+      /*
+       * Convert base64/data URL image
+       * into a Blob
+       */
+      const response =
+        await fetch(image);
 
-      // Generate SHA-256 hash
-      const arrayBuffer =
-        await blob.arrayBuffer();
+      const blob =
+        await response.blob();
 
-      const hash =
-        await generateSHA256(arrayBuffer);
+      /*
+       * Generate SHA-256 image hash
+       */
+      const imageHash =
+        await calculateSHA256(blob);
 
-      setImageHash(hash);
+      /*
+       * Image storage path
+       */
+      const filePath =
+        `${newRecordId}.jpg`;
 
-      // Storage path
-      const filePath = `${recordId}.jpg`;
-
-      // Upload image to Supabase Storage
-      const { error: uploadError } =
-        await supabase.storage
-          .from("test-images")
-          .upload(
-            filePath,
-            blob,
-            {
-              contentType: "image/jpeg",
-              upsert: false,
-            }
-          );
+      /*
+       * Upload image to Supabase Storage
+       */
+      const {
+        error: uploadError,
+      } = await supabase.storage
+        .from("test-images")
+        .upload(
+          filePath,
+          blob,
+          {
+            contentType:
+              "image/jpeg",
+            upsert: false,
+          }
+        );
 
       if (uploadError) {
         throw new Error(
@@ -142,47 +209,129 @@ export default function RecordPage() {
         );
       }
 
-      // Create database record
-      const record = {
-        record_id: recordId,
+      /*
+       * Read GPS location captured
+       * on the Capture page.
+       */
+      const savedLocation =
+        sessionStorage.getItem(
+          "narcolens_test_location"
+        );
 
-        case_id: "CASE-2026-001",
+      let latitude:
+        | number
+        | null = null;
+
+      let longitude:
+        | number
+        | null = null;
+
+      let testedAt =
+        new Date().toISOString();
+
+      if (savedLocation) {
+        try {
+          const parsed =
+            JSON.parse(
+              savedLocation
+            );
+
+          latitude =
+            typeof parsed.latitude ===
+            "number"
+              ? parsed.latitude
+              : null;
+
+          longitude =
+            typeof parsed.longitude ===
+            "number"
+              ? parsed.longitude
+              : null;
+
+          if (
+            typeof parsed.timestamp ===
+            "string"
+          ) {
+            testedAt =
+              parsed.timestamp;
+          }
+        } catch (locationError) {
+          console.error(
+            "Unable to read saved location:",
+            locationError
+          );
+        }
+      }
+
+      /*
+       * Prepare database record
+       */
+      const record = {
+        record_id:
+          newRecordId,
+
+        case_id:
+          "CASE-2026-001",
 
         test_kit:
           "Demo Colorimetric Kit",
 
-        result: analysisResult,
+        result:
+          analysis.result ??
+          "Inconclusive",
 
-        confidence: confidence,
+        confidence:
+          typeof analysis.confidence ===
+          "number"
+            ? analysis.confidence
+            : 0,
 
-        operator_id: "OP-1042",
+        operator_id:
+          "OP-1042",
 
-        latitude: 17.385,
+        latitude:
+          latitude,
 
-        longitude: 78.4867,
+        longitude:
+          longitude,
 
-        image_hash: hash,
+        tested_at:
+          testedAt,
 
-        image_path: filePath,
+        image_hash:
+          imageHash,
+
+        image_path:
+          filePath,
 
         verification_status:
           "Verified",
       };
 
-      const { error: recordError } =
-        await supabase
-          .from("test_records")
-          .insert([record]);
+      /*
+       * Insert record into Supabase
+       */
+      const {
+        error: insertError,
+      } = await supabase
+        .from("test_records")
+        .insert(record);
 
-      if (recordError) {
+      if (insertError) {
         throw new Error(
-          `Record save failed: ${recordError.message}`
+          `Record creation failed: ${insertError.message}`
         );
       }
 
+      /*
+       * Record successfully saved
+       */
       setSaved(true);
 
-      // Clear temporary session data
+      /*
+       * Clear temporary test data.
+       * The permanent record is now in Supabase.
+       */
       sessionStorage.removeItem(
         "narcolens_captured_image"
       );
@@ -190,240 +339,426 @@ export default function RecordPage() {
       sessionStorage.removeItem(
         "narcolens_analysis"
       );
-    } catch (error) {
-      console.error(error);
 
-      setSaveError(
-        error instanceof Error
-          ? error.message
-          : "Something went wrong while saving the record."
+      sessionStorage.removeItem(
+        "narcolens_test_location"
+      );
+    } catch (err) {
+      console.error(
+        "Unable to save record:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to save digital record."
       );
     } finally {
       setSaving(false);
     }
-  }
+  };
+
+  /*
+   * Automatically save the record
+   * once the page has loaded all required data.
+   */
+  useEffect(() => {
+    if (
+      image &&
+      analysis &&
+      !saved &&
+      !saving
+    ) {
+      saveRecord();
+    }
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [image, analysis]);
 
   return (
-    <main className="min-h-screen bg-[#F7F9FC] p-8">
-      <div className="mx-auto max-w-4xl">
+    <AppShell
+  title="Digital Record"
+  section="Create a tamper-evident digital record of the field test"
+>
+      <div className="mx-auto max-w-6xl space-y-6">
 
         {/* Header */}
         <div>
           <p className="text-sm font-medium text-[#174A7E]">
-            STEP 04 / 04
+            STEP 4 OF 4
           </p>
 
-          <h1 className="mt-2 text-3xl font-semibold text-[#0B1F3A]">
+          <h1 className="mt-1 text-2xl font-semibold text-[#0B1F3A]">
             Digital Test Record
           </h1>
 
-          <p className="mt-2 text-[#667085]">
-            Review and securely save the test record.
+          <p className="mt-1 text-sm text-[#667085]">
+            The captured image, analysis result,
+            location and integrity hash are stored
+            together as a digital record.
           </p>
         </div>
 
-        {/* Workflow */}
-        <div className="mt-8 flex items-center gap-3 text-sm">
-          <div className="text-[#667085]">
-            01 Test Details
-          </div>
-
-          <span>→</span>
-
-          <div className="text-[#667085]">
-            02 Capture
-          </div>
-
-          <span>→</span>
-
-          <div className="text-[#667085]">
-            03 Analysis
-          </div>
-
-          <span>→</span>
-
-          <div className="font-semibold text-[#174A7E]">
-            04 Record
-          </div>
-        </div>
-
-        {/* Record */}
-        <div className="mt-8 rounded-xl border border-[#D9E1EA] bg-white p-6">
-
-          {/* Record Information */}
-          <div className="grid gap-5 sm:grid-cols-2">
-
-            <div>
-              <p className="text-sm text-[#667085]">
-                Record ID
-              </p>
-
-              <p className="mt-1 font-medium text-[#172033]">
-                {recordId || "Generating..."}
-              </p>
-            </div>
-
-            <div>
-              <p className="text-sm text-[#667085]">
-                Case ID
-              </p>
-
-              <p className="mt-1 font-medium text-[#172033]">
-                CASE-2026-001
-              </p>
-            </div>
-
-            <div>
-              <p className="text-sm text-[#667085]">
-                Test Kit
-              </p>
-
-              <p className="mt-1 font-medium text-[#172033]">
-                Demo Colorimetric Kit
-              </p>
-            </div>
-
-            <div>
-              <p className="text-sm text-[#667085]">
-                Result
-              </p>
-
-              <p className="mt-1 font-medium text-[#174A7E]">
-                {analysisResult ||
-                  "Not available"}
-              </p>
-            </div>
-
-            <div>
-              <p className="text-sm text-[#667085]">
-                Confidence
-              </p>
-
-              <p className="mt-1 font-medium text-[#172033]">
-                {confidence}%
-              </p>
-            </div>
-
-            <div>
-              <p className="text-sm text-[#667085]">
-                Operator
-              </p>
-
-              <p className="mt-1 font-medium text-[#172033]">
-                OP-1042
-              </p>
-            </div>
-          </div>
-
-          {/* Captured Image */}
-          {capturedImage && (
-            <div className="mt-8 border-t border-[#D9E1EA] pt-6">
-
-              <p className="text-sm text-[#667085]">
-                Captured Test Image
-              </p>
-
-              <img
-                src={capturedImage}
-                alt="Captured field test"
-                className="mt-3 max-h-80 w-full rounded-lg border border-[#D9E1EA] object-contain"
-              />
-
-            </div>
-          )}
-
-          {/* Hash */}
-          <div className="mt-8 border-t border-[#D9E1EA] pt-6">
-
-            <p className="text-sm text-[#667085]">
-              Image SHA-256
+        {/* Error */}
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-medium text-red-700">
+              {error}
             </p>
+          </div>
+        )}
 
-            <p className="mt-1 break-all font-mono text-sm text-[#172033]">
-              {imageHash ||
-                "Generated during save"}
-            </p>
+        {/* Saving */}
+        {saving && (
+          <div className="rounded-lg border border-[#D9E1EA] bg-white p-5">
+            <div className="flex items-center gap-3">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#D9E1EA] border-t-[#174A7E]" />
+
+              <div>
+                <p className="font-medium text-[#172033]">
+                  Creating digital record...
+                </p>
+
+                <p className="mt-1 text-sm text-[#667085]">
+                  Uploading the captured image
+                  and storing the test metadata.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Successfully saved */}
+        {saved && (
+          <div className="rounded-lg border border-green-200 bg-green-50 p-5">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-green-100 text-green-700">
+                ✓
+              </div>
+
+              <div>
+                <h2 className="font-semibold text-green-800">
+                  Digital Record Created
+                </h2>
+
+                <p className="mt-1 text-sm text-green-700">
+                  The test record has been
+                  successfully stored.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Record information */}
+        {saved && (
+          <div className="grid gap-6 lg:grid-cols-3">
+
+            {/* Main record */}
+            <div className="lg:col-span-2 rounded-xl border border-[#D9E1EA] bg-white">
+
+              <div className="border-b border-[#D9E1EA] px-6 py-5">
+                <h2 className="text-lg font-semibold text-[#0B1F3A]">
+                  Record Details
+                </h2>
+
+                <p className="mt-1 text-sm text-[#667085]">
+                  Stored metadata for this field test.
+                </p>
+              </div>
+
+              <div className="grid gap-x-8 gap-y-5 p-6 sm:grid-cols-2">
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Record ID
+                  </p>
+
+                  <p className="mt-1 font-semibold text-[#172033]">
+                    {recordId}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Case ID
+                  </p>
+
+                  <p className="mt-1 font-medium text-[#172033]">
+                    CASE-2026-001
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Test Kit
+                  </p>
+
+                  <p className="mt-1 font-medium text-[#172033]">
+                    Demo Colorimetric Kit
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Operator
+                  </p>
+
+                  <p className="mt-1 font-medium text-[#172033]">
+                    OP-1042
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Result
+                  </p>
+
+                  <p className="mt-1 font-semibold text-[#174A7E]">
+                    {analysis?.result ??
+                      "Inconclusive"}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Confidence
+                  </p>
+
+                  <p className="mt-1 font-semibold text-[#172033]">
+                    {typeof analysis?.confidence ===
+                    "number"
+                      ? `${analysis.confidence.toFixed(
+                          1
+                        )}%`
+                      : "—"}
+                  </p>
+                </div>
+
+              </div>
+            </div>
+
+            {/* Location */}
+            <div className="rounded-xl border border-[#D9E1EA] bg-white">
+
+              <div className="border-b border-[#D9E1EA] px-5 py-4">
+                <h2 className="font-semibold text-[#0B1F3A]">
+                  Test Location
+                </h2>
+
+                <p className="mt-1 text-xs text-[#667085]">
+                  Device GPS captured during testing.
+                </p>
+              </div>
+
+              <div className="space-y-4 p-5">
+
+                {location ? (
+                  <>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[#667085]">
+                        Latitude
+                      </p>
+
+                      <p className="mt-1 font-medium text-[#172033]">
+                        {location.latitude.toFixed(
+                          6
+                        )}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[#667085]">
+                        Longitude
+                      </p>
+
+                      <p className="mt-1 font-medium text-[#172033]">
+                        {location.longitude.toFixed(
+                          6
+                        )}
+                      </p>
+                    </div>
+
+                    {location.timestamp && (
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-[#667085]">
+                          GPS Timestamp
+                        </p>
+
+                        <p className="mt-1 text-sm text-[#172033]">
+                          {new Date(
+                            location.timestamp
+                          ).toLocaleString()}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="rounded-lg bg-[#EAF2F8] p-3">
+                      <p className="text-xs font-medium text-[#174A7E]">
+                        ✓ Location captured
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-lg bg-amber-50 p-4">
+                    <p className="text-sm font-medium text-amber-800">
+                      Location unavailable
+                    </p>
+
+                    <p className="mt-1 text-xs text-amber-700">
+                      No GPS coordinates were
+                      available for this test.
+                    </p>
+                  </div>
+                )}
+
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Image + integrity */}
+        {saved && (
+          <div className="grid gap-6 lg:grid-cols-2">
+
+            {/* Captured image */}
+            <div className="rounded-xl border border-[#D9E1EA] bg-white">
+
+              <div className="border-b border-[#D9E1EA] px-6 py-4">
+                <h2 className="font-semibold text-[#0B1F3A]">
+                  Captured Test Image
+                </h2>
+              </div>
+
+              <div className="p-6">
+                {image ? (
+                  <img
+                    src={image}
+                    alt="Captured field test"
+                    className="max-h-[420px] w-full rounded-lg border border-[#D9E1EA] object-contain"
+                  />
+                ) : (
+                  <div className="flex h-64 items-center justify-center rounded-lg bg-[#F7F9FC] text-sm text-[#667085]">
+                    Image unavailable
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Integrity */}
+            <div className="rounded-xl border border-[#D9E1EA] bg-white">
+
+              <div className="border-b border-[#D9E1EA] px-6 py-4">
+                <h2 className="font-semibold text-[#0B1F3A]">
+                  Integrity Information
+                </h2>
+              </div>
+
+              <div className="space-y-5 p-6">
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Image Hash
+                  </p>
+
+                  <p className="mt-2 break-all rounded-lg bg-[#F7F9FC] p-3 font-mono text-xs text-[#172033]">
+                    SHA-256 generated during
+                    record creation
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Verification Status
+                  </p>
+
+                  <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-green-50 px-3 py-1.5 text-sm font-medium text-green-700">
+                    <span className="h-2 w-2 rounded-full bg-green-500" />
+                    Verified
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-[#D9E1EA] bg-[#F7F9FC] p-4">
+                  <p className="text-sm font-medium text-[#172033]">
+                    Tamper detection
+                  </p>
+
+                  <p className="mt-1 text-xs leading-5 text-[#667085]">
+                    The SHA-256 hash of the captured
+                    image is stored with the record.
+                    The Verify Record page can
+                    recalculate the hash and compare
+                    it with the stored value.
+                  </p>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Actions */}
+        {saved && (
+          <div className="flex flex-col gap-3 border-t border-[#D9E1EA] pt-6 sm:flex-row">
+
+            <button
+              onClick={() =>
+                router.push(
+                  `/verify?record=${recordId}`
+                )
+              }
+              className="rounded-lg bg-[#174A7E] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#123B64]"
+            >
+              Verify Record
+            </button>
+
+            <button
+              onClick={() =>
+                router.push(
+                  "/test-records"
+                )
+              }
+              className="rounded-lg border border-[#D9E1EA] bg-white px-5 py-3 text-sm font-semibold text-[#172033] transition hover:bg-[#F7F9FC]"
+            >
+              View Test Records
+            </button>
+
+            <button
+              onClick={() =>
+                router.push("/test")
+              }
+              className="rounded-lg border border-[#D9E1EA] bg-white px-5 py-3 text-sm font-semibold text-[#172033] transition hover:bg-[#F7F9FC]"
+            >
+              Start New Test
+            </button>
+
+            <button
+              onClick={() =>
+                router.push("/")
+              }
+              className="rounded-lg border border-[#D9E1EA] bg-white px-5 py-3 text-sm font-semibold text-[#172033] transition hover:bg-[#F7F9FC]"
+            >
+              Back to Dashboard
+            </button>
 
           </div>
-
-          {/* Save Button */}
-          {/* Actions */}
-<div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-
-  <button
-    onClick={saveRecord}
-    disabled={saving || saved}
-    className="rounded-lg bg-[#174A7E] px-5 py-3 font-medium text-white transition hover:bg-[#0B1F3A] disabled:cursor-not-allowed disabled:opacity-60"
-  >
-    {saving
-      ? "Saving..."
-      : saved
-        ? "Record Saved ✓"
-        : "Save Record"}
-  </button>
-
-  {saved && (
-    <>
-      <Link
-        href="/test"
-        className="rounded-lg border border-[#D9E1EA] bg-white px-5 py-3 text-center font-medium text-[#174A7E] transition hover:bg-[#F7F9FC]"
-      >
-        Start New Test
-      </Link>
-
-      <Link
-        href="/"
-        className="rounded-lg border border-[#D9E1EA] bg-white px-5 py-3 text-center font-medium text-[#172033] transition hover:bg-[#F7F9FC]"
-      >
-        Back to Dashboard
-      </Link>
-    </>
-  )}
-
-</div>
-
-          {/* Error */}
-          {saveError && (
-            <p className="mt-4 text-sm text-red-600">
-              {saveError}
-            </p>
-          )}
-
-          {/* Success */}
-          {saved && (
-            <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4">
-              <p className="text-sm font-medium text-green-800">
-                Record successfully saved.
-              </p>
-
-              <p className="mt-1 text-sm text-green-700">
-                The image and digital record have been
-                stored in Supabase.
-              </p>
-            </div>
-          )}
-
-        </div>
+        )}
 
         {/* Disclaimer */}
-        <div className="mt-6 rounded-lg border border-[#D9E1EA] bg-white p-4">
-
+        <div className="rounded-lg border border-[#D9E1EA] bg-white p-4">
           <p className="text-xs leading-5 text-[#667085]">
-
             <span className="font-semibold text-[#172033]">
-              Presumptive analysis:
+              Prototype notice:
             </span>{" "}
-
-            NarcoLens provides digital support for
-            field-test interpretation and documentation.
+            NarcoLens provides presumptive digital
+            analysis for demonstration purposes.
             Results do not replace confirmatory
             laboratory testing.
-
           </p>
-
         </div>
 
       </div>
-    </main>
+    </AppShell>
   );
 }
