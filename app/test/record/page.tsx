@@ -483,30 +483,27 @@ export default function DigitalRecordPage() {
        * FINAL DATABASE RECORD
        * -------------------------------------------------
        */
-      const signedRecord = {
-        ...record,
+    const signedRecord = {
+  ...record,
 
-        signature:
-          signedData.signature,
+  // Store the exact payload that was signed.
+  record_payload: record,
 
-        signature_algorithm:
-          signedData.signature_algorithm,
+  signature:
+    signedData.signature,
 
-        signing_key_id:
-          signedData.signing_key_id,
+  signature_algorithm:
+    signedData.signature_algorithm,
 
-        record_payload_hash:
-          signedData.record_payload_hash,
+  signing_key_id:
+    signedData.signing_key_id,
 
-        /*
-         * This is currently a demo status.
-         * Cryptographic verification will happen
-         * on the Verify Record page.
-         */
-        verification_status:
-          "Created",
-      };
+  record_payload_hash:
+    signedData.record_payload_hash,
 
+  verification_status:
+    "Created",
+};
       /*
        * Insert signed record into Supabase.
        */

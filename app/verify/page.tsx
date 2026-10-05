@@ -15,16 +15,22 @@ type TestRecord = {
   reagent: string | null;
   profile_id: string | null;
   profile_version: string | null;
+
   result: string | null;
   confidence: number | null;
   operator_id: string | null;
+
   latitude: number | null;
   longitude: number | null;
+
   tested_at: string | null;
+
   image_hash: string | null;
   image_path: string | null;
 
   verification_status: string | null;
+
+  record_payload: Record<string, unknown> | null;
 
   signature: string | null;
   signature_algorithm: string | null;
@@ -62,6 +68,12 @@ export default function VerifyPage() {
   const [calculatedPayloadHash, setCalculatedPayloadHash] =
     useState("");
 
+  /*
+   * ------------------------------------------------------
+   * Automatically verify ?record=...
+   * ------------------------------------------------------
+   */
+
   useEffect(() => {
     const params = new URLSearchParams(
       window.location.search
@@ -74,6 +86,12 @@ export default function VerifyPage() {
       verifyRecord(id);
     }
   }, []);
+
+  /*
+   * ------------------------------------------------------
+   * SHA-256
+   * ------------------------------------------------------
+   */
 
   async function generateSHA256(
     data: ArrayBuffer
@@ -93,6 +111,12 @@ export default function VerifyPage() {
       .join("");
   }
 
+  /*
+   * ------------------------------------------------------
+   * Verify record
+   * ------------------------------------------------------
+   */
+
   async function verifyRecord(
     suppliedId?: string
   ) {
@@ -101,12 +125,19 @@ export default function VerifyPage() {
     ).trim();
 
     if (!id) {
-      setMessage("Please enter a Record ID.");
+      setMessage(
+        "Please enter a Record ID."
+      );
+
       setRecord(null);
       setImageVerified(null);
       setSignatureVerified(null);
       setPayloadHashVerified(null);
       setOverallVerified(null);
+
+      setCalculatedHash("");
+      setCalculatedPayloadHash("");
+
       return;
     }
 
@@ -125,9 +156,9 @@ export default function VerifyPage() {
       setCalculatedPayloadHash("");
 
       /*
-       * ------------------------------------------------------
+       * --------------------------------------------------
        * Retrieve record
-       * ------------------------------------------------------
+       * --------------------------------------------------
        */
 
       const {
@@ -140,22 +171,25 @@ export default function VerifyPage() {
         .maybeSingle();
 
       if (error) {
-        throw new Error(error.message);
+        throw new Error(
+          error.message
+        );
       }
 
       if (!data) {
         setMessage(
           "No record was found with this Record ID."
         );
+
         return;
       }
 
       setRecord(data);
 
       /*
-       * ------------------------------------------------------
+       * --------------------------------------------------
        * IMAGE SHA-256 VERIFICATION
-       * ------------------------------------------------------
+       * --------------------------------------------------
        */
 
       let imageHashMatches = false;
@@ -189,7 +223,9 @@ export default function VerifyPage() {
           await image.arrayBuffer();
 
         const currentHash =
-          await generateSHA256(buffer);
+          await generateSHA256(
+            buffer
+          );
 
         setCalculatedHash(
           currentHash
@@ -207,73 +243,84 @@ export default function VerifyPage() {
       }
 
       /*
-       * ------------------------------------------------------
+       * --------------------------------------------------
        * DIGITAL SIGNATURE VERIFICATION
-       * ------------------------------------------------------
+       * --------------------------------------------------
        *
        * IMPORTANT:
-       * These are exactly the fields that were originally
-       * signed by /sign-record.
        *
-       * Signature fields themselves are NOT included.
+       * We now use the EXACT payload that was stored
+       * when the record was originally signed.
+       *
+       * This prevents timestamp / serialization changes
+       * from causing a false signature failure.
+       * --------------------------------------------------
        */
 
       let signatureMatches = false;
       let payloadHashMatches = false;
 
       if (
+        data.record_payload &&
         data.signature &&
         data.record_payload_hash
       ) {
-        const payload = {
-          record_id: data.record_id,
-          case_id: data.case_id,
-          test_kit: data.test_kit,
-          reagent: data.reagent,
-          profile_id: data.profile_id,
-          profile_version: data.profile_version,
-          result: data.result,
-          confidence: data.confidence,
-          operator_id: data.operator_id,
-          latitude: data.latitude,
-          longitude: data.longitude,
-          tested_at: data.tested_at,
-          image_hash: data.image_hash,
-          image_path: data.image_path,
-        };
+        const payload =
+          data.record_payload;
 
-        const response = await fetch(
-          `${API_URL}/verify-signature`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({
-              payload,
-              signature: data.signature,
-            }),
-          }
-        );
+        const verificationResponse =
+          await fetch(
+            `${API_URL}/verify-signature`,
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify({
+                payload,
+                signature:
+                  data.signature,
+              }),
+            }
+          );
 
         const verification =
-          await response.json();
+          await verificationResponse
+            .json();
 
-        if (!response.ok) {
+        if (!verificationResponse.ok) {
           throw new Error(
             verification.detail ||
               "Digital signature verification failed."
           );
         }
 
+        /*
+         * Verify Ed25519 signature.
+         */
+
         signatureMatches =
-          verification.signature_valid === true;
+          verification.signature_valid ===
+          true;
 
-        const calculatedHash =
-          verification.record_payload_hash;
+        setSignatureVerified(
+          signatureMatches
+        );
 
-        if (calculatedHash) {
+        /*
+         * Compare the backend's recalculated
+         * payload hash with the stored hash.
+         */
+
+        if (
+          verification.record_payload_hash
+        ) {
+          const calculatedHash =
+            verification.record_payload_hash;
+
           setCalculatedPayloadHash(
             calculatedHash
           );
@@ -283,22 +330,28 @@ export default function VerifyPage() {
             data.record_payload_hash.toLowerCase();
         }
 
-        setSignatureVerified(
-          signatureMatches
-        );
-
         setPayloadHashVerified(
           payloadHashMatches
         );
       } else {
-        setSignatureVerified(false);
-        setPayloadHashVerified(false);
+        /*
+         * Old records created before record_payload
+         * was added cannot perform digital verification.
+         */
+
+        setSignatureVerified(
+          false
+        );
+
+        setPayloadHashVerified(
+          false
+        );
       }
 
       /*
-       * ------------------------------------------------------
+       * --------------------------------------------------
        * OVERALL VERIFICATION
-       * ------------------------------------------------------
+       * --------------------------------------------------
        */
 
       const completeVerification =
@@ -321,7 +374,10 @@ export default function VerifyPage() {
       }
 
     } catch (error) {
-      console.error(error);
+      console.error(
+        "Unable to verify record:",
+        error
+      );
 
       setMessage(
         error instanceof Error
@@ -336,6 +392,12 @@ export default function VerifyPage() {
     }
   }
 
+  /*
+   * ------------------------------------------------------
+   * Date formatting
+   * ------------------------------------------------------
+   */
+
   function formatDate(
     date: string | null
   ) {
@@ -347,6 +409,12 @@ export default function VerifyPage() {
       date
     ).toLocaleString();
   }
+
+  /*
+   * ------------------------------------------------------
+   * UI
+   * ------------------------------------------------------
+   */
 
   return (
     <AppShell
@@ -390,7 +458,9 @@ export default function VerifyPage() {
               type="text"
               value={recordId}
               onChange={(e) =>
-                setRecordId(e.target.value)
+                setRecordId(
+                  e.target.value
+                )
               }
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -415,6 +485,8 @@ export default function VerifyPage() {
 
           </div>
 
+          {/* Message */}
+
           {message && (
             <div
               className={`mt-5 rounded-lg border p-4 ${
@@ -438,6 +510,7 @@ export default function VerifyPage() {
               </p>
             </div>
           )}
+
         </section>
 
         {/* Verification Result */}
@@ -485,17 +558,23 @@ export default function VerifyPage() {
 
                 <VerificationCheck
                   label="Image Integrity"
-                  verified={imageVerified}
+                  verified={
+                    imageVerified
+                  }
                 />
 
                 <VerificationCheck
                   label="Digital Signature"
-                  verified={signatureVerified}
+                  verified={
+                    signatureVerified
+                  }
                 />
 
                 <VerificationCheck
                   label="Payload Hash"
-                  verified={payloadHashVerified}
+                  verified={
+                    payloadHashVerified
+                  }
                 />
 
               </div>
@@ -515,21 +594,24 @@ export default function VerifyPage() {
                 <InfoItem
                   label="Case ID"
                   value={
-                    record.case_id || "—"
+                    record.case_id ||
+                    "—"
                   }
                 />
 
                 <InfoItem
                   label="Test Kit"
                   value={
-                    record.test_kit || "—"
+                    record.test_kit ||
+                    "—"
                   }
                 />
 
                 <InfoItem
                   label="Reagent"
                   value={
-                    record.reagent || "—"
+                    record.reagent ||
+                    "—"
                   }
                 />
 
@@ -548,7 +630,8 @@ export default function VerifyPage() {
                 <InfoItem
                   label="Result"
                   value={
-                    record.result || "—"
+                    record.result ||
+                    "—"
                   }
                 />
 
@@ -564,7 +647,8 @@ export default function VerifyPage() {
                 <InfoItem
                   label="Operator"
                   value={
-                    record.operator_id || "—"
+                    record.operator_id ||
+                    "—"
                   }
                 />
 
@@ -587,7 +671,9 @@ export default function VerifyPage() {
                   label="Latitude"
                   value={
                     record.latitude != null
-                      ? record.latitude.toFixed(6)
+                      ? record.latitude.toFixed(
+                          6
+                        )
                       : "—"
                   }
                 />
@@ -596,7 +682,9 @@ export default function VerifyPage() {
                   label="Longitude"
                   value={
                     record.longitude != null
-                      ? record.longitude.toFixed(6)
+                      ? record.longitude.toFixed(
+                          6
+                        )
                       : "—"
                   }
                 />
@@ -682,8 +770,9 @@ export default function VerifyPage() {
                 </h2>
 
                 <p className="mt-1 text-sm text-[#667085]">
-                  Verification of the signed record
-                  payload using the NarcoLens signing key.
+                  Verification of the exact signed
+                  record payload using the NarcoLens
+                  signing key.
                 </p>
 
               </div>
@@ -737,7 +826,6 @@ export default function VerifyPage() {
                       : "border-[#D9E1EA] bg-[#F7F9FC]"
                   }`}
                 >
-
                   <p
                     className={`text-sm font-medium ${
                       signatureVerified === true &&
@@ -757,7 +845,6 @@ export default function VerifyPage() {
                       ? "✕ Digital signature or payload hash verification failed."
                       : "Digital signature verification pending."}
                   </p>
-
                 </div>
 
               </div>
@@ -779,11 +866,11 @@ export default function VerifyPage() {
             SHA-256 verification confirms that the
             stored image matches its recorded hash.
             Ed25519 verification confirms that the
-            signed record payload has not been altered
-            since it was signed. These integrity checks
-            do not certify the underlying field-test
-            result or replace confirmatory laboratory
-            analysis.
+            exact stored record payload has not been
+            altered since it was signed. These integrity
+            checks do not certify the underlying
+            field-test result or replace confirmatory
+            laboratory analysis.
 
           </p>
 
