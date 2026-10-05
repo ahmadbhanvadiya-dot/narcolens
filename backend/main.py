@@ -255,7 +255,7 @@ async def analyze_image(
 
     except Exception as error:
         raise HTTPException(
-            status_code=500,
+            status_code=500,  
             detail=f"Image analysis failed: {error}",
         )
 

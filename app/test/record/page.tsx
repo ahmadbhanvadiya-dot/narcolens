@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import AppShell from "@/app/components/AppShell";
 import { supabase } from "@/lib/supabase";
 
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://127.0.0.1:8000";
+
 type AnalysisResult = {
   result?: string;
   confidence?: number;
@@ -32,11 +36,6 @@ type AnalysisResult = {
   };
 
   delta_e?: number;
-
-  profile?: {
-    id?: string;
-    version?: string;
-  };
 };
 
 type TestLocation = {
@@ -55,6 +54,13 @@ type TestMetadata = {
   startedAt?: string;
 };
 
+type SignatureData = {
+  signature: string;
+  signature_algorithm: string;
+  signing_key_id: string;
+  record_payload_hash: string;
+};
+
 export default function DigitalRecordPage() {
   const router = useRouter();
 
@@ -66,6 +72,9 @@ export default function DigitalRecordPage() {
 
   const [metadata, setMetadata] =
     useState<TestMetadata | null>(null);
+
+  const [location, setLocation] =
+    useState<TestLocation | null>(null);
 
   const [saving, setSaving] =
     useState(false);
@@ -79,18 +88,15 @@ export default function DigitalRecordPage() {
   const [recordId, setRecordId] =
     useState("");
 
-  const [location, setLocation] =
-    useState<TestLocation | null>(null);
-
   const [imageHash, setImageHash] =
     useState("");
 
-  /*
-   * ------------------------------------------------------
-   * Load temporary test data
-   * ------------------------------------------------------
-   */
+  const [signatureData, setSignatureData] =
+    useState<SignatureData | null>(null);
 
+  /*
+   * Load temporary test data.
+   */
   useEffect(() => {
     const capturedImage =
       sessionStorage.getItem(
@@ -102,14 +108,14 @@ export default function DigitalRecordPage() {
         "narcolens_analysis"
       );
 
-    const savedLocation =
-      sessionStorage.getItem(
-        "narcolens_test_location"
-      );
-
     const savedMetadata =
       sessionStorage.getItem(
         "narcolens_test_metadata"
+      );
+
+    const savedLocation =
+      sessionStorage.getItem(
+        "narcolens_test_location"
       );
 
     if (capturedImage) {
@@ -139,15 +145,7 @@ export default function DigitalRecordPage() {
           "Unable to read test metadata:",
           err
         );
-
-        setError(
-          "Unable to read test metadata."
-        );
       }
-    } else {
-      setError(
-        "Test metadata was not found. Please restart the test."
-      );
     }
 
     if (savedLocation) {
@@ -182,22 +180,13 @@ export default function DigitalRecordPage() {
     }
   }, []);
 
-  /*
-   * ------------------------------------------------------
-   * Generate Record ID
-   * ------------------------------------------------------
-   */
-
   const generateRecordId = () => {
     return `NLC-${Date.now()}`;
   };
 
   /*
-   * ------------------------------------------------------
-   * SHA-256
-   * ------------------------------------------------------
+   * Calculate SHA-256 for the captured image.
    */
-
   const calculateSHA256 = async (
     blob: Blob
   ) => {
@@ -210,12 +199,9 @@ export default function DigitalRecordPage() {
         buffer
       );
 
-    const hashArray =
-      Array.from(
-        new Uint8Array(
-          hashBuffer
-        )
-      );
+    const hashArray = Array.from(
+      new Uint8Array(hashBuffer)
+    );
 
     return hashArray
       .map((byte) =>
@@ -227,11 +213,8 @@ export default function DigitalRecordPage() {
   };
 
   /*
-   * ------------------------------------------------------
-   * Save Digital Record
-   * ------------------------------------------------------
+   * Save the complete digital record.
    */
-
   const saveRecord = async () => {
     if (!image) {
       setError(
@@ -249,7 +232,7 @@ export default function DigitalRecordPage() {
 
     if (!metadata) {
       setError(
-        "No test metadata was found."
+        "Test metadata was not found. Please restart the test."
       );
       return;
     }
@@ -259,64 +242,55 @@ export default function DigitalRecordPage() {
 
     try {
       /*
-       * Generate unique record ID
+       * Generate unique record ID.
        */
-
       const newRecordId =
         generateRecordId();
 
-      setRecordId(
-        newRecordId
-      );
+      setRecordId(newRecordId);
 
       /*
-       * Convert image into Blob
+       * Convert the captured image
+       * into a Blob.
        */
-
-      const response =
+      const imageResponse =
         await fetch(image);
 
       const blob =
-        await response.blob();
+        await imageResponse.blob();
 
       /*
-       * Generate SHA-256
+       * Calculate image SHA-256.
        */
-
-      const calculatedHash =
-        await calculateSHA256(
-          blob
-        );
+      const calculatedImageHash =
+        await calculateSHA256(blob);
 
       setImageHash(
-        calculatedHash
+        calculatedImageHash
       );
 
       /*
-       * Storage path
+       * Storage path.
        */
-
       const filePath =
         `${newRecordId}.jpg`;
 
       /*
-       * Upload image
+       * Upload image to Supabase Storage.
        */
-
       const {
         error: uploadError,
-      } =
-        await supabase.storage
-          .from("test-images")
-          .upload(
-            filePath,
-            blob,
-            {
-              contentType:
-                "image/jpeg",
-              upsert: false,
-            }
-          );
+      } = await supabase.storage
+        .from("test-images")
+        .upload(
+          filePath,
+          blob,
+          {
+            contentType:
+              "image/jpeg",
+            upsert: false,
+          }
+        );
 
       if (uploadError) {
         throw new Error(
@@ -325,8 +299,12 @@ export default function DigitalRecordPage() {
       }
 
       /*
-       * GPS
+       * Read saved GPS information.
        */
+      const savedLocation =
+        sessionStorage.getItem(
+          "narcolens_test_location"
+        );
 
       let latitude:
         | number
@@ -338,11 +316,6 @@ export default function DigitalRecordPage() {
 
       let testedAt =
         new Date().toISOString();
-
-      const savedLocation =
-        sessionStorage.getItem(
-          "narcolens_test_location"
-        );
 
       if (savedLocation) {
         try {
@@ -370,9 +343,7 @@ export default function DigitalRecordPage() {
             testedAt =
               parsed.timestamp;
           }
-        } catch (
-          locationError
-        ) {
+        } catch (locationError) {
           console.error(
             "Unable to read saved location:",
             locationError
@@ -381,15 +352,11 @@ export default function DigitalRecordPage() {
       }
 
       /*
-       * --------------------------------------------------
-       * Database Record
-       * --------------------------------------------------
+       * Build the record payload.
        *
-       * IMPORTANT:
-       * reagent, profile_id and profile_version
-       * require matching columns in Supabase.
+       * This is the exact object that will
+       * be digitally signed by FastAPI.
        */
-
       const record = {
         record_id:
           newRecordId,
@@ -422,35 +389,134 @@ export default function DigitalRecordPage() {
         operator_id:
           metadata.operatorId,
 
-        latitude:
-          latitude,
+        latitude,
 
-        longitude:
-          longitude,
+        longitude,
 
         tested_at:
           testedAt,
 
         image_hash:
-          calculatedHash,
+          calculatedImageHash,
 
         image_path:
           filePath,
-
-        verification_status:
-          "Verified",
       };
 
       /*
-       * Insert into Supabase
+       * -------------------------------------------------
+       * DIGITAL SIGNATURE
+       * -------------------------------------------------
+       *
+       * Send the record to FastAPI.
+       *
+       * The private Ed25519 key stays on the
+       * backend and NEVER reaches the browser.
        */
+      const signingResponse =
+        await fetch(
+          `${API_URL}/sign-record`,
+          {
+            method: "POST",
 
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body: JSON.stringify(
+              record
+            ),
+          }
+        );
+
+      if (!signingResponse.ok) {
+        const errorData =
+          await signingResponse
+            .json()
+            .catch(() => null);
+
+        throw new Error(
+          errorData?.detail ||
+            "Unable to digitally sign the record."
+        );
+      }
+
+      const signingData =
+        await signingResponse.json();
+
+      /*
+       * Validate signing response.
+       */
+      if (
+        signingData.status !==
+          "success" ||
+        !signingData.signature ||
+        !signingData.record_payload_hash
+      ) {
+        throw new Error(
+          "Digital signing service returned an invalid response."
+        );
+      }
+
+      const signedData: SignatureData =
+        {
+          signature:
+            signingData.signature,
+
+          signature_algorithm:
+            signingData.signature_algorithm,
+
+          signing_key_id:
+            signingData.signing_key_id,
+
+          record_payload_hash:
+            signingData.record_payload_hash,
+        };
+
+      setSignatureData(
+        signedData
+      );
+
+      /*
+       * -------------------------------------------------
+       * FINAL DATABASE RECORD
+       * -------------------------------------------------
+       */
+      const signedRecord = {
+        ...record,
+
+        signature:
+          signedData.signature,
+
+        signature_algorithm:
+          signedData.signature_algorithm,
+
+        signing_key_id:
+          signedData.signing_key_id,
+
+        record_payload_hash:
+          signedData.record_payload_hash,
+
+        /*
+         * This is currently a demo status.
+         * Cryptographic verification will happen
+         * on the Verify Record page.
+         */
+        verification_status:
+          "Created",
+      };
+
+      /*
+       * Insert signed record into Supabase.
+       */
       const {
         error: insertError,
-      } =
-        await supabase
-          .from("test_records")
-          .insert(record);
+      } = await supabase
+        .from("test_records")
+        .insert(
+          signedRecord
+        );
 
       if (insertError) {
         throw new Error(
@@ -459,18 +525,13 @@ export default function DigitalRecordPage() {
       }
 
       /*
-       * Success
+       * Record successfully saved.
        */
-
       setSaved(true);
 
       /*
-       * Clear temporary data.
-       *
-       * Metadata is also cleared because the
-       * permanent record now exists in Supabase.
+       * Clear temporary test data.
        */
-
       sessionStorage.removeItem(
         "narcolens_captured_image"
       );
@@ -486,7 +547,6 @@ export default function DigitalRecordPage() {
       sessionStorage.removeItem(
         "narcolens_test_metadata"
       );
-
     } catch (err) {
       console.error(
         "Unable to save record:",
@@ -504,11 +564,9 @@ export default function DigitalRecordPage() {
   };
 
   /*
-   * ------------------------------------------------------
-   * Automatically save
-   * ------------------------------------------------------
+   * Automatically save once all
+   * required data has loaded.
    */
-
   useEffect(() => {
     if (
       image &&
@@ -527,12 +585,6 @@ export default function DigitalRecordPage() {
     metadata,
   ]);
 
-  /*
-   * ------------------------------------------------------
-   * UI
-   * ------------------------------------------------------
-   */
-
   return (
     <AppShell
       title="Digital Record"
@@ -541,7 +593,6 @@ export default function DigitalRecordPage() {
       <div className="mx-auto max-w-6xl space-y-6">
 
         {/* Header */}
-
         <div>
           <p className="text-sm font-medium text-[#174A7E]">
             STEP 4 OF 4
@@ -552,14 +603,14 @@ export default function DigitalRecordPage() {
           </h1>
 
           <p className="mt-1 text-sm text-[#667085]">
-            The captured image, analysis result,
-            location and integrity hash are stored
+            The captured image, analysis,
+            location and cryptographic
+            integrity data are stored
             together as a digital record.
           </p>
         </div>
 
         {/* Error */}
-
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4">
             <p className="text-sm font-medium text-red-700">
@@ -569,10 +620,8 @@ export default function DigitalRecordPage() {
         )}
 
         {/* Saving */}
-
         {saving && (
           <div className="rounded-lg border border-[#D9E1EA] bg-white p-5">
-
             <div className="flex items-center gap-3">
 
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#D9E1EA] border-t-[#174A7E]" />
@@ -583,18 +632,17 @@ export default function DigitalRecordPage() {
                 </p>
 
                 <p className="mt-1 text-sm text-[#667085]">
-                  Uploading the captured image
-                  and storing the test metadata.
+                  Uploading the image,
+                  generating the integrity
+                  hash and signing the record.
                 </p>
               </div>
 
             </div>
-
           </div>
         )}
 
-        {/* Success */}
-
+        {/* Successfully saved */}
         {saved && (
           <div className="rounded-lg border border-green-200 bg-green-50 p-5">
 
@@ -605,30 +653,26 @@ export default function DigitalRecordPage() {
               </div>
 
               <div>
-
                 <h2 className="font-semibold text-green-800">
                   Digital Record Created
                 </h2>
 
                 <p className="mt-1 text-sm text-green-700">
-                  The test record has been
-                  successfully stored.
+                  The record has been stored
+                  with image integrity data
+                  and a digital signature.
                 </p>
-
               </div>
 
             </div>
-
           </div>
         )}
 
         {/* Record information */}
-
-        {saved && (
+        {saved && metadata && (
           <div className="grid gap-6 lg:grid-cols-3">
 
             {/* Main record */}
-
             <div className="rounded-xl border border-[#D9E1EA] bg-white lg:col-span-2">
 
               <div className="border-b border-[#D9E1EA] px-6 py-5">
@@ -645,76 +689,97 @@ export default function DigitalRecordPage() {
 
               <div className="grid gap-x-8 gap-y-5 p-6 sm:grid-cols-2">
 
-                <InfoItem
-                  label="Record ID"
-                  value={recordId}
-                />
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Record ID
+                  </p>
 
-                <InfoItem
-                  label="Case ID"
-                  value={
-                    metadata?.caseId ??
-                    "—"
-                  }
-                />
+                  <p className="mt-1 font-semibold text-[#172033]">
+                    {recordId}
+                  </p>
+                </div>
 
-                <InfoItem
-                  label="Test Kit"
-                  value={
-                    metadata?.testKit ??
-                    "—"
-                  }
-                />
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Case ID
+                  </p>
 
-                <InfoItem
-                  label="Reagent"
-                  value={
-                    metadata?.reagent ??
-                    "—"
-                  }
-                />
+                  <p className="mt-1 font-medium text-[#172033]">
+                    {metadata.caseId}
+                  </p>
+                </div>
 
-                <InfoItem
-                  label="Profile"
-                  value={
-                    metadata
-                      ? `${metadata.profileId} v${metadata.profileVersion}`
-                      : "—"
-                  }
-                />
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Test Kit
+                  </p>
 
-                <InfoItem
-                  label="Operator"
-                  value={
-                    metadata?.operatorId ??
-                    "—"
-                  }
-                />
+                  <p className="mt-1 font-medium text-[#172033]">
+                    {metadata.testKit}
+                  </p>
+                </div>
 
-                <InfoItem
-                  label="Result"
-                  value={
-                    analysis?.result ??
-                    "Inconclusive"
-                  }
-                />
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Reagent
+                  </p>
 
-                <InfoItem
-                  label="Confidence"
-                  value={
-                    typeof analysis?.confidence ===
+                  <p className="mt-1 font-medium text-[#172033]">
+                    {metadata.reagent}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Profile
+                  </p>
+
+                  <p className="mt-1 font-medium text-[#172033]">
+                    {metadata.profileId} v
+                    {metadata.profileVersion}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Operator
+                  </p>
+
+                  <p className="mt-1 font-medium text-[#172033]">
+                    {metadata.operatorId}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Result
+                  </p>
+
+                  <p className="mt-1 font-semibold text-[#174A7E]">
+                    {analysis?.result ??
+                      "Inconclusive"}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                    Confidence
+                  </p>
+
+                  <p className="mt-1 font-semibold text-[#172033]">
+                    {typeof analysis?.confidence ===
                     "number"
-                      ? `${analysis.confidence.toFixed(1)}%`
-                      : "—"
-                  }
-                />
+                      ? `${analysis.confidence.toFixed(
+                          1
+                        )}%`
+                      : "—"}
+                  </p>
+                </div>
 
               </div>
-
             </div>
 
             {/* Location */}
-
             <div className="rounded-xl border border-[#D9E1EA] bg-white">
 
               <div className="border-b border-[#D9E1EA] px-5 py-4">
@@ -733,23 +798,42 @@ export default function DigitalRecordPage() {
 
                 {location ? (
                   <>
-                    <InfoItem
-                      label="Latitude"
-                      value={location.latitude.toFixed(6)}
-                    />
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[#667085]">
+                        Latitude
+                      </p>
 
-                    <InfoItem
-                      label="Longitude"
-                      value={location.longitude.toFixed(6)}
-                    />
+                      <p className="mt-1 font-medium text-[#172033]">
+                        {location.latitude.toFixed(
+                          6
+                        )}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[#667085]">
+                        Longitude
+                      </p>
+
+                      <p className="mt-1 font-medium text-[#172033]">
+                        {location.longitude.toFixed(
+                          6
+                        )}
+                      </p>
+                    </div>
 
                     {location.timestamp && (
-                      <InfoItem
-                        label="GPS Timestamp"
-                        value={new Date(
-                          location.timestamp
-                        ).toLocaleString()}
-                      />
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-[#667085]">
+                          GPS Timestamp
+                        </p>
+
+                        <p className="mt-1 text-sm text-[#172033]">
+                          {new Date(
+                            location.timestamp
+                          ).toLocaleString()}
+                        </p>
+                      </div>
                     )}
 
                     <div className="rounded-lg bg-[#EAF2F8] p-3">
@@ -774,27 +858,21 @@ export default function DigitalRecordPage() {
                 )}
 
               </div>
-
             </div>
-
           </div>
         )}
 
         {/* Image + integrity */}
-
         {saved && (
           <div className="grid gap-6 lg:grid-cols-2">
 
             {/* Captured image */}
-
             <div className="rounded-xl border border-[#D9E1EA] bg-white">
 
               <div className="border-b border-[#D9E1EA] px-6 py-4">
-
                 <h2 className="font-semibold text-[#0B1F3A]">
                   Captured Test Image
                 </h2>
-
               </div>
 
               <div className="p-6">
@@ -812,51 +890,104 @@ export default function DigitalRecordPage() {
                 )}
 
               </div>
-
             </div>
 
             {/* Integrity */}
-
             <div className="rounded-xl border border-[#D9E1EA] bg-white">
 
               <div className="border-b border-[#D9E1EA] px-6 py-4">
-
                 <h2 className="font-semibold text-[#0B1F3A]">
-                  Integrity Information
+                  Cryptographic Integrity
                 </h2>
-
               </div>
 
               <div className="space-y-5 p-6">
 
+                {/* Image hash */}
                 <div>
 
                   <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
-                    Image Hash
+                    Image SHA-256
                   </p>
 
-                  <p className="mt-2 break-all rounded-lg bg-[#F7F9FC] p-3 font-mono text-xs text-[#172033]">
+                  <p className="mt-2 break-all rounded-lg bg-[#F7F9FC] p-3 font-mono text-xs leading-5 text-[#172033]">
                     {imageHash ||
-                      "SHA-256 generated during record creation"}
+                      "Hash unavailable"}
                   </p>
 
                 </div>
 
-                <div>
+                {/* Digital signature */}
+                {signatureData && (
+                  <>
+                    <div>
 
-                  <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
-                    Verification Status
-                  </p>
+                      <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                        Digital Signature
+                      </p>
 
-                  <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-green-50 px-3 py-1.5 text-sm font-medium text-green-700">
+                      <div className="mt-2 rounded-lg bg-[#F7F9FC] p-3">
 
-                    <span className="h-2 w-2 rounded-full bg-green-500" />
+                        <p className="break-all font-mono text-xs leading-5 text-[#172033]">
+                          {signatureData.signature}
+                        </p>
 
-                    Verified
+                      </div>
 
-                  </div>
+                    </div>
 
-                </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+
+                      <div>
+                        <p className="text-xs text-[#667085]">
+                          Algorithm
+                        </p>
+
+                        <p className="mt-1 text-sm font-medium text-[#172033]">
+                          {signatureData.signature_algorithm}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-[#667085]">
+                          Signing Key
+                        </p>
+
+                        <p className="mt-1 text-sm font-medium text-[#172033]">
+                          {signatureData.signing_key_id}
+                        </p>
+                      </div>
+
+                    </div>
+
+                    <div>
+
+                      <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
+                        Record Payload Hash
+                      </p>
+
+                      <p className="mt-2 break-all rounded-lg bg-[#F7F9FC] p-3 font-mono text-xs leading-5 text-[#172033]">
+                        {signatureData.record_payload_hash}
+                      </p>
+
+                    </div>
+
+                    <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+
+                      <p className="text-sm font-semibold text-green-800">
+                        ✓ Digital signature created
+                      </p>
+
+                      <p className="mt-1 text-xs leading-5 text-green-700">
+                        This record was signed by the
+                        NarcoLens backend using Ed25519.
+                        The private signing key remains
+                        on the server.
+                      </p>
+
+                    </div>
+                  </>
+                )}
 
                 <div className="rounded-lg border border-[#D9E1EA] bg-[#F7F9FC] p-4">
 
@@ -865,24 +996,21 @@ export default function DigitalRecordPage() {
                   </p>
 
                   <p className="mt-1 text-xs leading-5 text-[#667085]">
-                    The SHA-256 hash of the captured
-                    image is stored with the record.
-                    The Verify Record page can
-                    recalculate the hash and compare
-                    it with the stored value.
+                    The image SHA-256 hash checks
+                    whether the stored image changed.
+                    The Ed25519 signature provides
+                    cryptographic integrity for the
+                    record payload.
                   </p>
 
                 </div>
 
               </div>
-
             </div>
-
           </div>
         )}
 
         {/* Actions */}
-
         {saved && (
           <div className="flex flex-col gap-3 border-t border-[#D9E1EA] pt-6 sm:flex-row">
 
@@ -930,7 +1058,6 @@ export default function DigitalRecordPage() {
         )}
 
         {/* Disclaimer */}
-
         <div className="rounded-lg border border-[#D9E1EA] bg-white p-4">
 
           <p className="text-xs leading-5 text-[#667085]">
@@ -938,6 +1065,7 @@ export default function DigitalRecordPage() {
             <span className="font-semibold text-[#172033]">
               Prototype notice:
             </span>{" "}
+
             NarcoLens provides presumptive digital
             analysis for demonstration purposes.
             Results do not replace confirmatory
@@ -949,32 +1077,5 @@ export default function DigitalRecordPage() {
 
       </div>
     </AppShell>
-  );
-}
-
-
-/*
- * ------------------------------------------------------
- * Reusable information item
- * ------------------------------------------------------
- */
-
-function InfoItem({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div>
-      <p className="text-xs font-medium uppercase tracking-wide text-[#667085]">
-        {label}
-      </p>
-
-      <p className="mt-1 break-words font-medium text-[#172033]">
-        {value}
-      </p>
-    </div>
   );
 }
