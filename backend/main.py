@@ -7,7 +7,7 @@ import numpy as np
 
 from services.color_analysis import analyze_color
 from services.profiles import get_profile
-from services.signing import sign_payload, verify_signature
+from services.signing import sign_payload, verify_signature, hash_payload
 
 
 # ---------------------------------------------------------
@@ -109,42 +109,37 @@ async def sign_record(payload: dict):
 
 @app.post("/verify-signature")
 async def verify_record_signature(data: dict):
-    """
-    Verify a digital signature against a record payload.
-    """
-
     payload = data.get("payload")
     signature = data.get("signature")
 
     if not isinstance(payload, dict):
         raise HTTPException(
             status_code=400,
-            detail="Payload must be an object.",
+            detail="Payload must be an object."
         )
 
     if not signature:
         raise HTTPException(
             status_code=400,
-            detail="Signature is required.",
+            detail="Signature is required."
         )
 
     try:
-        valid = verify_signature(
-            payload,
-            signature,
-        )
+        valid = verify_signature(payload, signature)
+        calculated_hash = hash_payload(payload)
 
         return {
             "status": "success",
             "signature_valid": valid,
+            "record_payload_hash": calculated_hash,
+            "signature_algorithm": "Ed25519",
         }
 
     except RuntimeError as error:
         raise HTTPException(
             status_code=500,
-            detail=str(error),
+            detail=str(error)
         )
-
 
 # =========================================================
 # IMAGE ANALYSIS
