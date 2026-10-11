@@ -114,12 +114,13 @@ export default function AppShell({
         </div>
       </div>
 
-      {/* Floating bottom navigation */}
+      
+      {/* Animated floating bottom navigation */}
       <nav
         aria-label="Main navigation"
         className="fixed inset-x-0 bottom-0 z-50 px-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-6"
       >
-        <div className="mx-auto max-w-[600px] rounded-xl border border-[#D9E1EA] bg-white/95 p-1.5 shadow-[0_4px_24px_rgba(11,31,58,0.12)] backdrop-blur-md">
+        <div className="nav-dock mx-auto max-w-[600px] rounded-xl border border-[#D9E1EA] bg-white/95 p-1.5 shadow-[0_4px_24px_rgba(11,31,58,0.12)] backdrop-blur-md">
           <div className="grid grid-cols-4 gap-1">
             {navItems.map((item) => {
               const active = isActive(item.href);
@@ -130,21 +131,37 @@ export default function AppShell({
                   key={item.href}
                   href={item.href}
                   aria-current={active ? "page" : undefined}
-                  className={`flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-lg px-1 py-2.5 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#174A7E]/40 sm:flex-row sm:gap-2 sm:px-3 ${
+                  className={`nav-item group relative flex min-w-0 flex-col items-center justify-center gap-1.5 overflow-hidden rounded-lg px-1 py-2.5 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#174A7E]/40 sm:flex-row sm:gap-2 sm:px-3 ${
                     active
-                      ? "bg-[#EAF2F8] text-[#174A7E]"
-                      : "text-[#667085] hover:bg-[#F3F6F9] hover:text-[#172033]"
+                      ? "nav-item-active bg-[#EAF2F8] text-[#174A7E]"
+                      : "text-[#667085]"
                   }`}
                 >
-                  <Icon
-                    size={19}
-                    strokeWidth={active ? 2.2 : 1.8}
-                    className="shrink-0"
-                  />
+                  {/* Animated active highlight */}
+                  {active && (
+                    <span
+                      className="nav-active-indicator pointer-events-none absolute inset-0 rounded-lg bg-[#EAF2F8]"
+                      aria-hidden="true"
+                    />
+                  )}
+
+                  <span className="nav-icon relative z-10 flex shrink-0 items-center justify-center">
+                    <Icon
+                      size={19}
+                      strokeWidth={active ? 2.3 : 1.8}
+                      className={`transition-colors duration-200 ${
+                        active
+                          ? "text-[#174A7E]"
+                          : "text-[#667085] group-hover:text-[#174A7E]"
+                      }`}
+                    />
+                  </span>
 
                   <span
-                    className={`text-[10px] leading-tight sm:text-xs ${
-                      active ? "font-semibold" : "font-medium"
+                    className={`nav-label relative z-10 text-[10px] leading-tight sm:text-xs ${
+                      active
+                        ? "font-semibold text-[#174A7E]"
+                        : "font-medium text-[#667085] group-hover:text-[#174A7E]"
                     }`}
                   >
                     {item.label}
@@ -155,6 +172,7 @@ export default function AppShell({
           </div>
         </div>
       </nav>
+
     </main>
   );
 }
